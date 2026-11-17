@@ -281,7 +281,40 @@ function selectPlayersOfWeek(performances, ownerOf, count = 4) {
   return picked;
 }
 
+// ---- Playoff picture ----------------------------------------------------------------
+// Seeds 1-4 are the four division winners (best record first); seeds 5-7 are the best
+// remaining records in the conference ("wild cards"); `bubble` is the next two teams out.
+// Tiebreaks are simply record, then point differential (not the full NFL tiebreaker list).
+function playoffPicture(rows, spots = 7) {
+  const out = {};
+  for (const conf of ['AFC', 'NFC']) {
+    const inConf = rows.filter(r => r.division && r.division.startsWith(conf));
+    const winners = [];
+    for (const g of groupStandings(inConf)) winners.push(g.teams[0]);
+    winners.sort(byRecord);
+    const winnerIds = new Set(winners.map(w => w.teamId));
+    const rest = inConf.filter(r => !winnerIds.has(r.teamId)).sort(byRecord);
+    const wildCards = rest.slice(0, Math.max(0, spots - winners.length));
+    out[conf] = {
+      seeds: [...winners, ...wildCards].map((t, n) => ({ seed: n + 1, divisionWinner: n < winners.length, team: t })),
+      bubble: rest.slice(wildCards.length, wildCards.length + 2)
+    };
+  }
+  return out;
+}
+
+// Everything the /team profile needs, from already-normalized data.
+function teamProfile(team, standingsRows, ranked) {
+  const row = standingsRows.find(r => r.teamId === team.id);
+  if (!row) return null;
+  const division = standingsRows.filter(r => r.division && r.division === row.division).sort(byRecord);
+  const powerRank = ranked.findIndex(r => r.teamId === team.id) + 1;
+  return { row, divisionRank: division.findIndex(r => r.teamId === team.id) + 1, divisionSize: division.length, powerRank: powerRank || null, powerTotal: ranked.length };
+}
+const ordinal = n => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+
 module.exports = {
+  playoffPicture, teamProfile, ordinal,
   NFL, DIVISION_OF, DIVISION_ORDER, DEV_LABELS, LEADER_CATEGORIES,
   pick, num, clip, slug, bar, findDeep, currentWeekFromHub,
   normalizeTeams, teamsById, divisionOf, normalizeStandings, groupStandings, recordText, signed, byRecord, powerRankings,

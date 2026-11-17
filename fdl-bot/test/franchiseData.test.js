@@ -115,6 +115,34 @@ test('findDeep / current week from the league hub', () => {
   assert.deepStrictEqual(D.currentWeekFromHub({ nothing: 'here' }), { week: null, season: null });
 });
 
+test('playoff picture: division winners are seeds 1-4, then wild cards, then the bubble', () => {
+  // Build a fake 16-team AFC from real division names so divisions line up.
+  const afc = D.NFL.filter(([, , d]) => d.startsWith('AFC'));
+  const ts = D.normalizeTeams(afc.map(([displayName, abbrName], i) => ({ teamId: 100 + i, displayName, abbrName, ovrRating: 80 })));
+  const wins = [11, 5, 4, 3, 10, 9, 2, 1, 8, 7, 6, 5, 9, 4, 3, 2]; // index = team order
+  const rows = D.normalizeStandings(ts.map((t, i) => ({ teamId: t.id, totalWins: wins[i], totalLosses: 17 - wins[i], ptsFor: 300 + wins[i], ptsAgainst: 300 })), ts);
+  const pic = D.playoffPicture(rows).AFC;
+  assert.strictEqual(pic.seeds.length, 7);
+  assert.ok(pic.seeds.slice(0, 4).every(s => s.divisionWinner) && pic.seeds.slice(4).every(s => !s.divisionWinner));
+  assert.deepStrictEqual(pic.seeds.slice(0, 4).map(s => s.team.name), ['Bills', 'Ravens', 'Broncos', 'Texans']); // 11, 10, 9, 8 wins
+  assert.strictEqual(pic.bubble.length, 2);
+  assert.deepStrictEqual(D.playoffPicture(rows).NFC.seeds, []); // no NFC teams in this fixture
+});
+
+test('team profile: division and power rank', () => {
+  const rows = D.normalizeStandings([
+    { teamId: 1, totalWins: 8, totalLosses: 3, ptsFor: 300, ptsAgainst: 250 },
+    { teamId: 3, totalWins: 9, totalLosses: 2, ptsFor: 310, ptsAgainst: 240 },
+    { teamId: 5, totalWins: 10, totalLosses: 1, ptsFor: 330, ptsAgainst: 200 }
+  ], teams);
+  const prof = D.teamProfile(byId[1], rows, D.powerRankings(rows));
+  assert.strictEqual(prof.divisionRank, 2);
+  assert.strictEqual(prof.divisionSize, 2);
+  assert.strictEqual(prof.powerRank, 3);
+  assert.strictEqual(D.teamProfile({ id: 99 }, rows, []), null);
+  assert.deepStrictEqual([1, 2, 3, 4, 11, 12, 21, 22].map(D.ordinal), ['1st', '2nd', '3rd', '4th', '11th', '12th', '21st', '22nd']);
+});
+
 test('small helpers', () => {
   assert.strictEqual(D.bar(91, 10), '▰▰▰▰▰▰▰▰▰▱');
   assert.strictEqual(D.bar(0, 4), '▱▱▱▱');

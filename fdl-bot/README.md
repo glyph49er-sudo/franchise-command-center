@@ -162,6 +162,10 @@ These read the live Madden league through the connection set up with `/ea-connec
 | `/leaders category [week]` | Passing / rushing / receiving / tackles / sacks / interceptions leaders |
 | `/power-rankings` | Ranking from record, point differential and team overall |
 | `/free-agents [position]` | Best available free agents |
+| `/franchise-hub` | League overview: season/week, claimed coaches, top 5, this week's games |
+| `/team team` | Team profile: record, division and power rank, coach, best players, this week's game |
+| `/playoff-picture [conference]` | Seeds 1-7 per conference plus the bubble (tiebreaks: record, then point differential) |
+| `/top-players [position]` | Best players in the league by overall, including free agents |
 | `/game-channels week [category]` | Admin: one channel per game, both coaches pinged |
 | `/auto-potw [week] [force]` | Admin: post Players of the Week from the box scores |
 | `/franchise-debug dataset` | Admin: show the raw field names EA sends |

@@ -142,6 +142,13 @@ module.exports = function installFranchise(client, commands, ctx) {
     new SlashCommandBuilder().setName('power-rankings').setDescription('FDL power rankings from record, point differential and team rating.'),
     new SlashCommandBuilder().setName('free-agents').setDescription('Best available free agents.')
       .addStringOption(o => o.setName('position').setDescription('Filter, e.g. QB, WR, OL, DB')),
+    new SlashCommandBuilder().setName('franchise-hub').setDescription('League overview: week, coaches, top teams and this week\'s games.'),
+    new SlashCommandBuilder().setName('team').setDescription('Team profile: record, division rank, power rank, coach and best players.')
+      .addStringOption(o => teamOpt(o, 'NFL team').setRequired(true)),
+    new SlashCommandBuilder().setName('playoff-picture').setDescription('Current playoff seeds and the bubble.')
+      .addStringOption(o => o.setName('conference').setDescription('Show one conference').addChoices({ name: 'AFC', value: 'AFC' }, { name: 'NFC', value: 'NFC' })),
+    new SlashCommandBuilder().setName('top-players').setDescription('Best players in the league by overall.')
+      .addStringOption(o => o.setName('position').setDescription('Filter, e.g. QB, WR, OL, DB')),
     new SlashCommandBuilder().setName('game-channels').setDescription('Admin: create a channel for every game of a week and ping both coaches.')
       .addIntegerOption(o => o.setName('week').setDescription('Week number').setRequired(true).setMinValue(1).setMaxValue(23))
       .addStringOption(o => o.setName('category').setDescription('Category name (default: "Week N")'))
@@ -155,7 +162,7 @@ module.exports = function installFranchise(client, commands, ctx) {
         .addChoices(...['teams', 'standings', 'schedule', 'roster', 'stats', 'hub'].map(v => ({ name: v, value: v }))))
       .setDefaultMemberPermissions(admin)
   );
-  const OWN = new Set(['standings', 'schedule', 'roster', 'player', 'leaders', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
+  const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
 
   // ---------------------------------------------------------------------------
   // Rendering
@@ -274,6 +281,77 @@ module.exports = function installFranchise(client, commands, ctx) {
 
   async function run(i) {
     const name = i.commandName;
+
+    if (name === 'franchise-hub') {
+      const conn = teamClaimer.getConnection() || {};
+      const [teams, rows, cur] = await Promise.all([getTeams(), getStandings(), getCurrent()]);
+      const claimed = teams.filter(t => ownerOf(t.name)).length;
+      const e = embed(`🏟️ ${conn.leagueName || 'FDL Franchise'}`, `${cur.season !== null && cur.season !== undefined ? `Season **${cur.season + 1}** • ` : ''}${cur.week ? `Week **${cur.week}**` : 'Week unknown'}`)
+        .addFields({ name: 'Coaches', value: `**${claimed}/${teams.length}** teams claimed`, inline: true });
+      const top = D.powerRankings(rows).slice(0, 5);
+      if (top.length) e.addFields({ name: 'Top 5 (power rankings)', value: top.map((r, n) => `**${n + 1}.** ${r.name} (${D.recordText(r)})`).join('\n'), inline: true });
+      if (cur.week) {
+        const games = await getGames(cur.week).catch(() => []);
+        if (games.length) {
+          const done = games.filter(g => g.final).length;
+          e.addFields({ name: `Week ${cur.week} games`, value: `**${done}/${games.length}** final${done < games.length ? '' : ' — week complete ✅'}\n${games.slice(0, 8).map(D.gameLine).join('\n')}` });
+        }
+      }
+      e.addFields({ name: 'More', value: '`/standings` `/playoff-picture` `/power-rankings` `/schedule` `/leaders` `/team` `/player` `/top-players` `/free-agents`' });
+      return i.editReply({ embeds: [e] });
+    }
+
+    if (name === 'team') {
+      const teams = await getTeams();
+      const team = findTeam(teams, i.options.getString('team', true));
+      if (!team) throw new UserError("I couldn't find that team.");
+      const rows = await getStandings();
+      const prof = D.teamProfile(team, rows, D.powerRankings(rows));
+      if (!prof) throw new UserError(`No standings found for the ${team.name} yet.`);
+      const { row } = prof, owner = ownerOf(team.name);
+      const e = embed(`${team.name}`, `${owner ? `Coach: <@${owner}>` : 'No coach claimed yet'}${team.user ? ` • EA: \`${team.user}\`` : ''}`)
+        .addFields(
+          { name: 'Record', value: `**${D.recordText(row)}** (${D.signed(row.diff)})`, inline: true },
+          { name: row.division || 'Division', value: prof.divisionRank ? `${D.ordinal(prof.divisionRank)} of ${prof.divisionSize}` : '—', inline: true },
+          { name: 'Power rank', value: prof.powerRank ? `${D.ordinal(prof.powerRank)} of ${prof.powerTotal}` : '—', inline: true },
+          { name: 'Team overall', value: `${row.ovr || team.ovr || '—'}`, inline: true },
+          { name: 'Points', value: `${row.pf} for • ${row.pa} against`, inline: true }
+        );
+      const roster = await getRoster(team).catch(() => []);
+      if (roster.length) e.addFields({ name: 'Best players', value: roster.sort((a, b) => b.ovr - a.ovr).slice(0, 5).map(p => `**${p.ovr}** ${p.name} (${p.pos})${p.dev && p.dev !== 'Normal' ? ` — ${p.dev}` : ''}`).join('\n') });
+      const { week } = await getCurrent();
+      if (week) {
+        const game = (await getGames(week).catch(() => [])).find(g => g.awayId === team.id || g.homeId === team.id);
+        if (game) e.addFields({ name: `Week ${week}`, value: D.gameLine(game) });
+      }
+      return i.editReply({ embeds: [e] });
+    }
+
+    if (name === 'playoff-picture') {
+      const rows = await getStandings();
+      const pic = D.playoffPicture(rows);
+      const only = i.options.getString('conference');
+      const e = embed('🏆 Playoff Picture').setFooter({ text: 'Seeds 1-4 division winners • tiebreaks: record, then point differential only' });
+      for (const conf of ['AFC', 'NFC']) {
+        if (only && only !== conf) continue;
+        const p = pic[conf];
+        if (!p.seeds.length) continue;
+        const lines = p.seeds.map(s => `**${s.seed}.** ${s.team.name} (${D.recordText(s.team)})${s.divisionWinner ? ' 🏅' : ''}`);
+        if (p.bubble.length) lines.push(`_On the bubble:_ ${p.bubble.map(t => `${t.name} (${D.recordText(t)})`).join(', ')}`);
+        e.addFields({ name: conf, value: lines.join('\n'), inline: true });
+      }
+      if (!e.data?.fields?.length) throw new UserError('No standings available yet.');
+      return i.editReply({ embeds: [e] });
+    }
+
+    if (name === 'top-players') {
+      const pos = i.options.getString('position');
+      if (!peek('allPlayers')) await i.editReply('🔎 Loading every roster from EA — the first lookup takes a minute…');
+      const players = (await getAllPlayers()).filter(p => D.matchesPosition(p.pos, pos)).sort((a, b) => b.ovr - a.ovr).slice(0, 15);
+      if (!players.length) throw new UserError(`No ${pos ? pos.toUpperCase() + ' ' : ''}players found.`);
+      const lines = players.map((p, n) => `${String(n + 1).padStart(2)} ${p.name.slice(0, 20).padEnd(20)} ${p.pos.padEnd(4)} ${String(p.ovr).padStart(2)} ${p.team.slice(0, 11)}`);
+      return i.editReply({ content: '', embeds: [embed(`⭐ Top Players${pos ? ` — ${pos.toUpperCase()}` : ''}`, block(lines)).setFooter({ text: 'Top 15 by overall, including free agents' })] });
+    }
 
     if (name === 'standings') {
       const rows = await getStandings();
