@@ -1,24 +1,39 @@
 # Franchise Command Center
 
-can you put all the team claimer features and everything into the fdl bot. i want it all in one bot. keep team claimer progress too if needed. Also since there's now ea connection, please add every feature franchise hub has. also pls  fix the prospect stats. The players should only be strong in the stats of THEIR POSITION. a corner shouldnt have 88 throw power yk? and also please make the physicals elite for superstars and above. and for stars dont like make it super ass. also since there's ea connection, just add any features you deem useful to me with what you know about my bot! even with design! i'd love some more advanced things like maybe scouting a player shows their face card or something! just make it fancy and advanced.  this whole thing fascinates me!
+This repo contains two working layers:
 
-This project was built with [Lovable](https://lovable.dev).
+- `fdl-bot/` runs the Discord bot and owns the EA franchise connection.
+- `src/` is the browser dashboard for the franchise hub, team directory, and league status.
 
-## Build with Lovable
+## Local setup
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/55c633e6-4978-4af0-bc14-f877088cbf52).
+1. Install Node dependencies in the repo root and the bot folder.
+2. Copy `fdl-bot/.env.example` to `fdl-bot/.env` and fill in the Discord credentials.
+3. Start the bot:
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+   ```bash
+   cd fdl-bot
+   npm install
+   npm start
+   ```
 
-## Development
+4. Start the read-only API when you want the web dashboard to read franchise data:
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+   ```bash
+   cd fdl-bot
+   npm run start:api
+   ```
 
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
-```
+5. Run the web app from the repo root:
+
+   ```bash
+   npm install
+   npm run dev
+   ```
+
+## Project status
+
+- Static dashboard shell completed.
+- Team directory and Franchise Hub layout completed.
+- Read-only API for real franchise exports completed.
+- Additional bot-side EA and claim progress work remains to be connected to live runtime data as the exact league setup is configured.
