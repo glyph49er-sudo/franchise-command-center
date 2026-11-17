@@ -629,7 +629,67 @@ const CLAIMER_COMMANDS = new Set(commands.map(c => c.name));
 sharedCommands.push(...commands);
 
 
+// ---------------------------------------------------------------------------
+// Auto-verify: a claim stays "pending" after the member submits their EA username. The bot keeps
+// reading Madden, and the moment that username owns the team in the franchise it assigns the team
+// (same applyTeamAssignment path as /teams assign) - no need to press "Joined".
+// Per team the LAST person to start a claim is the pending one (they're the one joining right now).
+// ---------------------------------------------------------------------------
+const pendingClaims = new Map(); // roleId -> { userId, username, interaction, guildId, createdAt }
+const CLAIM_WATCH_MS = 45 * 1000, CLAIM_PENDING_TTL = 60 * 60 * 1000;
+let claimWatchBusy = false;
+
+function registerPendingClaim(roleId, userId, username, interaction) {
+  const prior = pendingClaims.get(roleId);
+  if (prior && prior.userId !== userId) {
+    prior.interaction?.editReply({ content: `ℹ️ Someone else started claiming this team after you, so I'm now watching for them instead. Start again if this was you.`, embeds: [], components: [] }).catch(() => {});
+  }
+  pendingClaims.set(roleId, { userId, username, interaction, guildId: interaction.guildId, createdAt: Date.now() });
+}
+async function tellClaimant(pending, guild, payload) {
+  try { await pending.interaction.editReply(payload); return; } catch { /* ephemeral token expired */ }
+  try {
+    const user = await client.users.fetch(pending.userId);
+    await user.send({ content: payload.content || undefined, embeds: payload.embeds || [] });
+  } catch { /* DMs closed - the nickname/role change is still visible in the server */ }
+}
+async function claimWatchTick() {
+  if (claimWatchBusy || !pendingClaims.size) return;
+  if (!eaConnection?.refreshToken || !eaConnection?.leagueId) return;
+  claimWatchBusy = true;
+  try {
+    for (const [roleId, p] of [...pendingClaims]) if (Date.now() - p.createdAt > CLAIM_PENDING_TTL) pendingClaims.delete(roleId);
+    if (!pendingClaims.size) return;
+    await refreshEAConnection("claim-watch");
+    for (const [roleId, p] of [...pendingClaims]) {
+      const guild = client.guilds.cache.get(p.guildId);
+      const role = guild?.roles.cache.get(roleId);
+      if (!guild || !role || !config.roles[roleId]) { pendingClaims.delete(roleId); continue; }
+      const ownership = EA.findTeamOwner(eaConnection.teams, role.name, p.username);
+      if (!ownership.ok) continue; // not in the league on that team yet - keep watching
+      try {
+        const done = await finalizeClaim(guild, p.userId, roleId, p.username);
+        pendingClaims.delete(roleId);
+        await tellClaimant(p, guild, { content: "", components: [], embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ Welcome to the ${role.name}!`)
+          .setDescription(`Madden shows **${p.username}** on the **${role.name}** in **${eaConnection.leagueName || "the franchise"}**, so I verified you automatically.\n\nNickname: **${done.nickname}**${done.nickNote}`)] });
+        console.log(`[claim-watch] auto-verified ${p.userId} on ${role.name}`);
+      } catch (err) {
+        // Someone else got the team / they already hold one / bot can't assign: stop watching and say why.
+        pendingClaims.delete(roleId);
+        await tellClaimant(p, guild, { content: `❌ I saw you join, but couldn't assign **${role.name}**: ${describeError(err)}`, embeds: [], components: [] });
+      }
+    }
+  } catch (err) {
+    console.error("[claim-watch]", err?.message || err);
+  } finally {
+    claimWatchBusy = false;
+  }
+}
+
 client.once("ready", async () => {
+  const claimWatchTimer = setInterval(claimWatchTick, CLAIM_WATCH_MS);
+  claimWatchTimer.unref?.();
+
 
   // EA franchise ownership is refreshed on startup and every 10 minutes.
   if (eaConnection?.refreshToken && eaConnection?.leagueId) {
@@ -1304,15 +1364,17 @@ client.on("interactionCreate", async interaction => {
           "**How to join**",
           "1. Open Madden NFL 27 → **Franchise** → **Join League** (or accept the invite).",
           `2. Pick **${leagueName}** and take the **${role.name}**.`,
-          "3. Come back here and press **Joined**.",
+          "3. That's it — I'm reading Madden and will verify you automatically as soon as you're in (you can also press **Joined** to check right now).",
           "",
-          `⚠️ **Do NOT press Joined until you are actually in the league on the ${role.name}.** The bot checks EA directly — if you haven't joined yet you **won't be verified** and nothing will be assigned.`
+          `⚠️ Nothing is assigned until Madden shows you on the ${role.name} with this EA username.`
         ].join("\n"))
         .setFooter({ text: "Verification reads the live Madden franchise owner field." });
       const joinedRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`claimJoined:${roleId}:${username}`.slice(0, 100)).setLabel("Joined").setEmoji("✅").setStyle(ButtonStyle.Success)
       );
-      return interaction.reply({ embeds: [leagueInfo], components: [joinedRow], ephemeral: true });
+      const sentClaim = await interaction.reply({ embeds: [leagueInfo], components: [joinedRow], ephemeral: true });
+      registerPendingClaim(roleId, interaction.user.id, username, interaction);
+      return sentClaim;
     }
 
     if (interaction.isButton() && interaction.customId.startsWith("claimJoined:")) {
@@ -1327,11 +1389,13 @@ client.on("interactionCreate", async interaction => {
         await refreshEAConnection("claim-joined"); // always fresh: they may have joined seconds ago
         const ownership = EA.findTeamOwner(eaConnection.teams, role.name, username);
         if (!ownership.ok) {
+          registerPendingClaim(roleId, interaction.user.id, username, interaction); // keep watching for them
           return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xe67e22).setTitle("❌ Not verified yet")
-            .setDescription(`${ownership.reason}\n\nMake sure you've **joined ${eaConnection.leagueName || "the league"}** in Madden on the **${role.name}** with the EA account \`${username}\`, then press **Joined** again.\n\nNo role or nickname was changed.`)],
+            .setDescription(`${ownership.reason}\n\nMake sure you've **joined ${eaConnection.leagueName || "the league"}** in Madden on the **${role.name}** with the EA account \`${username}\`, then I'll verify you automatically — I'm still watching Madden for you (or press **Joined** again to check right now).\n\nNo role or nickname was changed yet.`)],
             components: interaction.message.components });
         }
         const finished = await finalizeClaim(interaction.guild, interaction.user.id, roleId, username);
+        pendingClaims.delete(roleId);
         return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ Welcome to the ${role.name}!`)
           .setDescription(`Madden confirms **${username}** owns the **${role.name}** in **${eaConnection.leagueName || "the connected franchise"}**.\n\nNickname: **${finished.nickname}**${finished.nickNote}`)], components: [] });
       } catch (err) {
@@ -1363,6 +1427,9 @@ return {
   roleIdForTeamName,
   applyTeamAssignment,
   finalizeClaim,
+  claimWatchTick,
+  registerPendingClaim,
+  pendingClaims,
   ownerOfTeamName
 };
 };

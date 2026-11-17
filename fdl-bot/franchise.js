@@ -181,13 +181,13 @@ module.exports = function installFranchise(client, commands, ctx) {
       .addIntegerOption(o => o.setName('week').setDescription('Week number').setRequired(true).setMinValue(1).setMaxValue(23))
       .addStringOption(o => o.setName('category').setDescription('Category name (default: "Week N")'))
       .setDefaultMemberPermissions(admin),
-    new SlashCommandBuilder().setName('auto-potw').setDescription('Admin: post Players of the Week from the EA box scores.')
+    new SlashCommandBuilder().setName('auto-potw').setDescription("Admin: post this week's Players of the Week from Madden's weekly awards.")
       .addIntegerOption(o => o.setName('week').setDescription('Week number (default: current week)').setMinValue(1).setMaxValue(23))
       .addBooleanOption(o => o.setName('force').setDescription('Post again even if this week was already posted'))
       .setDefaultMemberPermissions(admin),
     new SlashCommandBuilder().setName('franchise-debug').setDescription('Admin: show the raw field names EA is sending (for fixing blank values).')
       .addStringOption(o => o.setName('dataset').setDescription('Which export').setRequired(true)
-        .addChoices(...['teams', 'standings', 'schedule', 'roster', 'stats', 'hub'].map(v => ({ name: v, value: v }))))
+        .addChoices(...['teams', 'standings', 'schedule', 'roster', 'stats', 'hub', 'awards'].map(v => ({ name: v, value: v }))))
       .setDefaultMemberPermissions(admin)
   );
   const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'stats', 'player_configuration', 'stat-leaders', 'compare', 'schedule-difficulty', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
@@ -220,14 +220,20 @@ module.exports = function installFranchise(client, commands, ctx) {
   // ---------------------------------------------------------------------------
   // Players of the Week from EA stats
   // ---------------------------------------------------------------------------
+  // Madden decides the weekly awards itself after each sim; we read them from EA (never score box scores).
   async function buildPotw(week) {
-    const [teams, stats] = await Promise.all([getTeams(), getStats(week)]);
-    const perf = D.playerPerformances(stats, D.teamsById(teams));
-    if (!perf.length) throw new UserError(`EA returned no player stats for week ${week} yet.`);
-    const picked = D.selectPlayersOfWeek(perf, ownerOf, 4);
-    if (picked.length < 4) {
-      throw new UserError(`Only found ${picked.length} standout player${picked.length === 1 ? '' : 's'} on teams with different claimed coaches (need 4). Check \`/sync-teams\` so every team's coach is linked.`);
+    const [hub, players] = await Promise.all([getHub().catch(() => null), getAllPlayers()]);
+    const awards = D.extractWeeklyAwards({ players, hub, week });
+    if (!awards.length) {
+      throw new UserError(`Madden hasn't published the weekly awards for week ${week} yet (they appear after the week is simmed). `
+        + 'If this keeps happening after the sim, an admin can run `/franchise-debug dataset:awards` to see what EA is sending.');
     }
+    const sig = awards.map(a => `${a.category}:${a.name}`).join('|');
+    const picked = awards.map(a => ({
+      userId: ownerOf(a.team) || null, name: a.name, team: a.team,
+      line: `**${a.category} Player of the Week:** **${a.name}** (${a.pos ? `${a.pos}, ` : ''}${a.team})`
+    }));
+    picked.sig = sig;
     return picked;
   }
   async function postPotw(week, { force = false, channelId = POTW_CHANNEL_ID } = {}) {
@@ -236,39 +242,138 @@ module.exports = function installFranchise(client, commands, ctx) {
     const state = readState();
     if (state.posted[key] && !force) throw new UserError(`Players of the Week for week ${week} was already posted. Use \`force: true\` to post it again.`);
     const picked = await buildPotw(week);
+    // Some EA fields are plain flags that stay set until the next awards come out: don't re-post last week's winners.
+    if (!force && state.lastSig === picked.sig) throw new UserError(`Madden still shows last week's awards for week ${week}; waiting for the new ones.`);
     const channel = await client.channels.fetch(channelId).catch(() => null);
     if (!channel?.isTextBased()) throw new UserError(`I can't access the Players of the Week channel (${channelId}).`);
     const sent = await features.postPlayersOfWeek(channel, `Week ${week}`, picked.map(p => ({ userId: p.userId, line: p.line })));
     state.posted[key] = { messageId: sent.id, channelId: channel.id, at: Date.now() };
+    state.lastSig = picked.sig;
     writeState(state);
     return { sent, picked };
   }
-  // Opt-in: AUTO_POTW=true. Once every game of the current (or previous) week is final,
-  // post that week's Players of the Week - once.
+  // Automatic: after a week is simmed Madden publishes its weekly awards; the first time they show up for a
+  // week the bot posts a NEW Players of the Week message (never edits an old one). Set AUTO_POTW=false to turn off.
+  const awardsWaiting = new Set();
   async function autoPotwTick() {
+    const result = { posted: false };
     try {
       const { week: current, season } = await getCurrent();
-      if (!current) return;
+      if (!current) return result;
       const state = readState();
       for (const week of [current - 1, current].filter(w => w >= 1)) {
         if (state.posted[`${season ?? 'x'}-${week}`]) continue;
         const games = await getGames(week);
         if (!games.length || !games.every(g => g.final)) continue;
-        await postPotw(week);
+        try { await postPotw(week); } catch (err) {
+          if (err instanceof UserError) { if (!awardsWaiting.has(week)) { awardsWaiting.add(week); console.log(`[auto-potw] week ${week} is final; waiting for Madden's weekly awards`); } continue; }
+          throw err;
+        }
         console.log(`[auto-potw] posted Players of the Week for week ${week}`);
-        return;
+        return { posted: true, week };
       }
     } catch (err) {
       if (!(err instanceof UserError)) console.error('[auto-potw]', err.message || err);
     }
+    return result;
   }
-  if (String(process.env.AUTO_POTW).toLowerCase() === 'true') {
+  if (String(process.env.AUTO_POTW ?? 'true').toLowerCase() !== 'false') {
     client.once('ready', () => {
       setTimeout(autoPotwTick, 60 * 1000).unref?.();
       setInterval(autoPotwTick, 15 * 60 * 1000).unref?.();
       console.log('[auto-potw] automatic Players of the Week is ON');
     });
   }
+
+
+  // ---------------------------------------------------------------------------
+  // Live posts: every public stat post (standings, leaders, free agents, rosters...) is remembered and
+  // re-rendered on each Madden refresh, editing the SAME message in place. Players of the Week and
+  // Game of the Week are NOT live - each of those is a new, separate post.
+  // ---------------------------------------------------------------------------
+  const LIVE = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule',
+    'roster', 'player', 'leaders', 'stats', 'stat-leaders', 'power-rankings', 'free-agents', 'schedule-difficulty', 'compare']);
+  const HEAVY = new Set(['stat-leaders', 'schedule-difficulty']); // read up to 18 weeks; refreshed every 3rd cycle
+  const LIVE_FILE = path.join(__dirname, 'data', 'live_posts.json');
+  const LIVE_MAX = 100, LIVE_PER_CHANNEL = 20;
+  const liveState = (() => { try { return JSON.parse(fs.readFileSync(LIVE_FILE, 'utf8')); } catch { return { posts: [] }; } })();
+  const saveLive = () => { fs.mkdirSync(path.dirname(LIVE_FILE), { recursive: true }); const tmp = LIVE_FILE + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(liveState)); fs.renameSync(tmp, LIVE_FILE); };
+  let liveTick = 0, liveBusy = false;
+
+  const snapshotOptions = i => {
+    const data = i.options?.data || [];
+    const sub = data.find(o => o.type === 1);
+    return { sub: sub ? sub.name : null, opts: Object.fromEntries((sub ? sub.options || [] : data).map(o => [o.name, o.value])) };
+  };
+  const fakeOptions = snap => ({
+    getSubcommand: () => snap.sub,
+    getString: k => (snap.opts[k] === undefined ? null : String(snap.opts[k])),
+    getInteger: k => (snap.opts[k] === undefined ? null : Number(snap.opts[k])),
+    getNumber: k => (snap.opts[k] === undefined ? null : Number(snap.opts[k])),
+    getBoolean: k => (snap.opts[k] === undefined ? null : Boolean(snap.opts[k])),
+    getUser: () => null, getChannel: () => null, getRole: () => null
+  });
+
+  async function registerLive(i) {
+    try {
+      const msg = await i.fetchReply();
+      if (!msg?.id) return;
+      liveState.posts.push({ messageId: msg.id, channelId: i.channelId, guildId: i.guildId, command: i.commandName, snap: snapshotOptions(i), at: Date.now(), hash: null });
+      // keep the newest per channel / overall
+      const mine = liveState.posts.filter(p => p.channelId === i.channelId);
+      for (const old of mine.slice(0, Math.max(0, mine.length - LIVE_PER_CHANNEL))) liveState.posts.splice(liveState.posts.indexOf(old), 1);
+      if (liveState.posts.length > LIVE_MAX) liveState.posts.splice(0, liveState.posts.length - LIVE_MAX);
+      saveLive();
+    } catch (err) { console.error('[live] could not register post:', err.message || err); }
+  }
+
+  // Re-runs a command with the options it was originally posted with and returns the new payload.
+  async function renderLive(post) {
+    let payload = null;
+    const fake = {
+      commandName: post.command, options: fakeOptions(post.snap), guildId: post.guildId, channelId: post.channelId,
+      inGuild: () => true, isRepliable: () => true, deferred: true, replied: false,
+      memberPermissions: { has: () => false }, user: { id: 'live-refresh', tag: 'live' },
+      deferReply: async () => {}, editReply: async p => { payload = typeof p === 'string' ? { content: p } : p; }, reply: async p => { payload = typeof p === 'string' ? { content: p } : p; }
+    };
+    await run(fake);
+    return payload;
+  }
+  const fingerprint = payload => JSON.stringify({ c: payload.content || '', e: (payload.embeds || []).map(e => { const j = e.toJSON ? e.toJSON() : { ...e }; delete j.timestamp; return j; }) });
+
+  async function refreshLive({ force = false } = {}) {
+    if (liveBusy) return { updated: 0, checked: 0, skipped: true };
+    liveBusy = true;
+    let updated = 0, checked = 0, dirty = false;
+    try {
+      liveTick++;
+      for (const post of [...liveState.posts]) {
+        if (!force && HEAVY.has(post.command) && liveTick % 3 !== 0) continue;
+        checked++;
+        try {
+          const payload = await renderLive(post);
+          if (!payload) continue;
+          const fp = fingerprint(payload);
+          if (fp === post.hash) continue;
+          const channel = await client.channels.fetch(post.channelId);
+          await channel.messages.edit(post.messageId, { content: payload.content ?? '', embeds: payload.embeds || [], components: payload.components || [] });
+          post.hash = fp; updated++; dirty = true;
+        } catch (err) {
+          if (err instanceof UserError) continue; // EA hiccup or empty data: keep the old post as it is
+          if ([10008, 10003, 50001, 50013].includes(err?.code)) { liveState.posts.splice(liveState.posts.indexOf(post), 1); dirty = true; continue; } // message/channel gone
+          console.error(`[live] ${post.command}:`, err.message || err);
+        }
+        await new Promise(r => setTimeout(r, 700)); // stay well under Discord's edit rate limit
+      }
+      if (dirty) saveLive();
+    } finally { liveBusy = false; }
+    return { updated, checked };
+  }
+  const invalidate = () => cache.clear();
+  client.once('ready', () => {
+    const t = setInterval(() => refreshLive().catch(e => console.error('[live]', e.message || e)), CACHE_MS + 15 * 1000);
+    t.unref?.();
+  });
 
   // ---------------------------------------------------------------------------
   // Interaction handling
@@ -281,6 +386,7 @@ module.exports = function installFranchise(client, commands, ctx) {
       // Admin tools answer privately; everything else is public so the league can see it.
       await i.deferReply({ ephemeral: ['franchise-debug', 'game-channels', 'auto-potw'].includes(i.commandName) });
       await run(i);
+      if (LIVE.has(i.commandName)) await registerLive(i);
     } catch (err) {
       const msg = err instanceof UserError ? `⚠️ ${err.message}` : `❌ Something went wrong: ${String(err.message || err).slice(0, 300)}`;
       if (!(err instanceof UserError)) console.error('[franchise]', err);
@@ -582,6 +688,13 @@ module.exports = function installFranchise(client, commands, ctx) {
       else if (dataset === 'schedule') { const week = await resolveWeek(null); const raw = await withEA(c => EA.getSchedule(c, week - 1)); count = raw.length; sample = raw[0]; }
       else if (dataset === 'roster') { const teams = await getTeams(); const raw = await withEA(c => EA.getTeamRoster(c, teams[0].id, teams[0].index)); count = raw.length; sample = raw[0]; }
       else if (dataset === 'stats') { const week = await resolveWeek(null); const s = await withEA(c => EA.getWeeklyStats(c, week - 1)); count = Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v.length])); sample = Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v[0]])); }
+      else if (dataset === 'awards') {
+        const [hub, players] = await Promise.all([getHub().catch(() => ({})), getAllPlayers()]);
+        const teams = await getTeams();
+        const rawRow = (await withEA(c => EA.getTeamRoster(c, teams[0].id, teams[0].index)))[0] || {};
+        sample = { ...D.describeAwardData(hub, players), playerRowFieldNames: Object.keys(rawRow).filter(k => /week|award|honor|potw/i.test(k)), allPlayerFieldCount: Object.keys(rawRow).length, hubTopLevelKeys: Object.keys(hub || {}), found_for_current_week: D.extractWeeklyAwards({ players, hub, week: (await getCurrent()).week }).map(a => `${a.category}: ${a.name} (${a.team}) via ${a.source}`) };
+        count = '—';
+      }
       else { sample = await getHub(); count = '—'; }
       const text = JSON.stringify(sample, null, 1) || 'null';
       return i.editReply({ content: `**${dataset}** — records: \`${JSON.stringify(count)}\`\n\`\`\`json\n${D.clip(text, 1700)}\n\`\`\`` });
@@ -606,6 +719,6 @@ module.exports = function installFranchise(client, commands, ctx) {
   return {
     getStandings, getCurrent, getTeams, getRoster, getAllPlayers, getGames, getStats, findTeam, ownerOf,
     rosterWithin, currentSeasonYear, playerCard, withEA, UserError, embed, get hiddenDevs() { return HIDDEN_DEVS; },
-    postPotw, autoPotwTick
+    postPotw, autoPotwTick, refreshLive, invalidate, getHub, LIVE
   };
 };

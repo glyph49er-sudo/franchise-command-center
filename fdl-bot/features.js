@@ -260,10 +260,13 @@ module.exports = function installFeatures(client, commands, ctx) {
     return null;}
   // Auto Players of the Week (called by franchise.js). entries: [{userId, line}]
   async function postPlayersOfWeek(channel,week,entries){
-    const users=entries.map(e=>e.userId);
-    const rec={week,users,claimed:{},lines:Object.fromEntries(entries.map(e=>[e.userId,e.line])),channelId:channel.id,messageId:null,createdAt:Date.now(),auto:true};
-    const embed=new EmbedBuilder().setColor(0xf1c40f).setTitle(`🏆 Players of the Week — ${week}`).setDescription(entries.map((e,n)=>`**${n+1}.** ${e.line} — <@${e.userId}>\n**+3 non-physical attribute**`).join('\n\n')+`\n\nEach coach gets ONE +3 to ONE non-physical attribute (no Speed, Acceleration, Agility, Strength, Jumping, Change of Direction, Stamina, or Injury) for ONE player. Press your button to claim.`).setFooter({text:'Auto-selected from the EA franchise box scores'}).setTimestamp();
-    const rows=[new ActionRowBuilder().addComponents(...entries.map((e,n)=>new ButtonBuilder().setCustomId(`potw_claim:${e.userId}`).setLabel(`Claim #${n+1}`).setEmoji('🏆').setStyle(ButtonStyle.Primary)))];
+    // entries: [{userId|null, line}]. Only coaches with a claimed team get a ping + claim button (one per coach).
+    const seen=new Set(),coached=entries.filter(e=>e.userId&&!seen.has(e.userId)&&seen.add(e.userId));
+    const users=coached.map(e=>e.userId);
+    const rec={week,users,claimed:{},lines:Object.fromEntries(coached.map(e=>[e.userId,e.line])),channelId:channel.id,messageId:null,createdAt:Date.now(),auto:true};
+    const body=entries.map((e,n)=>e.userId?`**${n+1}.** ${e.line} — <@${e.userId}>\n**+3 non-physical attribute**`:`**${n+1}.** ${e.line} — _no coach claimed_`).join('\n\n');
+    const embed=new EmbedBuilder().setColor(0xf1c40f).setTitle(`🏆 Players of the Week — ${week}`).setDescription(body+`\n\nEach coach gets ONE +3 to ONE non-physical attribute (no Speed, Acceleration, Agility, Strength, Jumping, Change of Direction, Stamina, or Injury) for ONE player. Press your button to claim.`).setFooter({text:'From the weekly awards Madden decided after the sim'}).setTimestamp();
+    const rows=coached.length?[new ActionRowBuilder().addComponents(...coached.map((e,n)=>new ButtonBuilder().setCustomId(`potw_claim:${e.userId}`).setLabel(`Claim #${entries.indexOf(e)+1}`).setEmoji('🏆').setStyle(ButtonStyle.Primary)))]:[];
     const sent=await channel.send({embeds:[embed],components:rows,allowedMentions:{users}});
     rec.messageId=sent.id;const arr=read('potw',[]);arr.push(rec);write('potw',arr);return sent;
   }

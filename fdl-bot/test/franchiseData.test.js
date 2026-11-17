@@ -217,3 +217,21 @@ test('bracket helpers: projected wild card 2v7/3v6/4v5, season log', () => {
   assert.strictEqual(log[0].result, 'W');
   assert.strictEqual(log[1].bye, true);
 });
+
+test('weekly awards: player flags, week-matched arrays, hub entries, categories by position', () => {
+  const players = [
+    { id: '1', name: 'Dak P', pos: 'QB', team: 'Cowboys', teamId: 1, awards: { weeklyAwardOffensive: true } },
+    { id: '2', name: 'Micah P', pos: 'LB', team: 'Cowboys', teamId: 1, awards: { playerOfTheWeek: [{ weekIndex: 1 }, { weekIndex: 5 }] } },
+    { id: '3', name: 'Old Award', pos: 'WR', team: 'Giants', teamId: 2, awards: { playerOfTheWeek: [{ weekIndex: 0 }] } },
+    { id: '4', name: 'Kicker K', pos: 'K', team: 'Bills', teamId: 3 },
+    { id: '5', name: 'No Awards', pos: 'RB', team: 'Jets', teamId: 4 }
+  ];
+  const hub = { seasonInfo: { isWeeklyAwardsPeriodActive: true }, requestInfoList: [{ title: 'Special Teams Player of the Week', playerId: 4 }] };
+  const out = D.extractWeeklyAwards({ players, hub, week: 2 });
+  assert.deepStrictEqual(out.map(a => `${a.category}:${a.name}`), ['Offensive:Dak P', 'Defensive:Micah P', 'Special Teams:Kicker K']);
+  assert.strictEqual(D.extractWeeklyAwards({ players, hub: null, week: 6 }).some(a => a.name === 'Micah P'), true); // weekIndex 5 -> week 6
+  assert.deepStrictEqual(D.extractWeeklyAwards({ players: [players[4]], hub: null, week: 2 }), []);
+  assert.deepStrictEqual(D.awardFields({ fullName: 'x', potwCount: 0, ovr: 90 }), undefined);
+  assert.deepStrictEqual(D.awardFields({ weeklyAwardOffensive: 1 }), { weeklyAwardOffensive: 1 });
+  assert.strictEqual(D.describeAwardData(hub, players).weeklyAwardsActive, 1);
+});

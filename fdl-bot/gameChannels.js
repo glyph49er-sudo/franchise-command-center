@@ -219,4 +219,13 @@ module.exports = function install(client, commands, ctx) {
       try { if (i.deferred || i.replied) await i.editReply(msg); else await i.reply({ content: msg, ephemeral: true }); } catch {}
     }
   });
+
+  // Used by /update-sync and the periodic refresh: re-render every tracked weekly scoreboard.
+  async function refreshScoreboards() {
+    const store = load();
+    for (const k of Object.keys(store.weeks)) await updateScoreboard(null, store, k);
+    return Object.keys(store.weeks).length;
+  }
+  client.once('ready', () => { const t = setInterval(() => refreshScoreboards().catch(() => {}), 5 * 60 * 1000); t.unref?.(); });
+  return { refreshScoreboards };
 };

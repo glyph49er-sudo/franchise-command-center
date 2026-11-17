@@ -142,7 +142,7 @@ function normalizeGames(raw, teams) {
     const homeId = num(pick(g, ['homeTeamId']));
     const final = isFinalGame(g);
     return {
-      awayId, homeId,
+      awayId, homeId, scheduleId: num(pick(g, ['scheduleId']), 0),
       away: byId[awayId]?.name || `Team ${awayId}`,
       home: byId[homeId]?.name || `Team ${homeId}`,
       awayScore: num(pick(g, ['awayScore'])), homeScore: num(pick(g, ['homeScore'])),
@@ -183,7 +183,8 @@ function normalizePlayer(p, byId = {}) {
     yearsPro: num(pick(p, ['yearsPro', 'yearsInLeague']), 1),
     teamId, team: byId[teamId]?.name || (teamId ? `Team ${teamId}` : 'Free Agent'),
     portraitId: pick(p, ['portraitId']),
-    ratings
+    ratings,
+    awards: awardFields(p)
   };
 }
 // Ported from Snallabot's "hidden devs" setting: a rookie (0 years pro) with a non-Normal
@@ -286,6 +287,76 @@ function selectPlayersOfWeek(performances, ownerOf, count = 4) {
     });
   }
   return picked;
+}
+
+// ---- Weekly awards (Players of the Week) ----------------------------------------------
+// Madden decides the weekly awards itself after each sim. The unofficial EA export doesn't document where
+// they live, so this looks for award-shaped fields on player rows and award-shaped entries in the league hub.
+// Use `/franchise-debug awards` to see exactly what EA sends; set AWARD_FIELDS=field1,field2 to add fields.
+const AWARD_KEY = /player.?of.?the.?week|potw|weekly.?award|week.?award|(offensive|defensive|special.?teams?).?(player|award)|award.?type/i;
+const EXTRA_AWARD_KEYS = String(process.env.AWARD_FIELDS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+const isAwardKey = k => AWARD_KEY.test(k) || EXTRA_AWARD_KEYS.includes(String(k).toLowerCase());
+const truthyAward = v => (Array.isArray(v) ? v.length > 0 : v && typeof v === 'object' ? Object.keys(v).length > 0 : typeof v === 'string' ? v !== '' && v !== '0' : Boolean(v));
+function awardFields(p) {
+  const out = {};
+  for (const [k, v] of Object.entries(p || {})) if (isAwardKey(k) && truthyAward(v)) out[k] = v;
+  return Object.keys(out).length ? out : undefined;
+}
+const OFF_POS = /^(QB|HB|RB|FB|WR|TE|LT|LG|C|RG|RT|OL)$/, DEF_POS = /^(LE|RE|DT|DE|DL|LOLB|MLB|ROLB|LB|CB|FS|SS|S|DB)$/, ST_POS = /^(K|P|KR|PR)$/;
+function awardCategory(text, pos = '') {
+  const t = String(text || '');
+  if (/special|kick|punt|return|\bst\b/i.test(t)) return 'Special Teams';
+  if (/defens/i.test(t)) return 'Defensive';
+  if (/offens/i.test(t)) return 'Offensive';
+  if (ST_POS.test(pos)) return 'Special Teams';
+  if (DEF_POS.test(pos)) return 'Defensive';
+  if (OFF_POS.test(pos)) return 'Offensive';
+  return 'Player';
+}
+// Does this award value belong to `week` (1-based)? Flags/strings count as "this week's"; arrays/objects with a week field must match.
+function awardMatchesWeek(v, week) {
+  const items = Array.isArray(v) ? v : [v];
+  return items.some(it => {
+    if (it && typeof it === 'object') {
+      const w = pick(it, ['weekIndex', 'week', 'weekNumber']);
+      return w === undefined || w === null || Number(w) === week || Number(w) === week - 1;
+    }
+    return truthyAward(it);
+  });
+}
+// players: normalizePlayer output (with .awards). hub: Mobile_Career_GetLeagueHub payload.
+// -> [{ category, name, pos, team, teamId, source }] (one per award, de-duplicated by player+category)
+function extractWeeklyAwards({ players = [], hub = null, week }) {
+  const found = new Map();
+  const add = (category, p, source) => { const key = `${p.id || p.name}|${category}`; if (p.name && !found.has(key)) found.set(key, { category, name: p.name, pos: p.pos || '', team: p.team || '', teamId: p.teamId || 0, source }); };
+  for (const p of players) {
+    for (const [k, v] of Object.entries(p.awards || {})) if (awardMatchesWeek(v, week)) add(awardCategory(`${k} ${typeof v === 'string' ? v : ''}`, p.pos), p, `player.${k}`);
+  }
+  if (hub) {
+    const byId = new Map(players.map(p => [String(p.id), p]));
+    const walk = node => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (!node || typeof node !== 'object') return;
+      const label = ['title', 'type', 'description', 'name'].map(k => (typeof node[k] === 'string' ? node[k] : '')).join(' ');
+      if (/player.?of.?the.?week|weekly award/i.test(label)) {
+        const id = pick(node, ['playerId', 'rosterId', 'presentationId']);
+        const hit = id !== undefined ? byId.get(String(id)) : players.find(p => p.name && label.toLowerCase().includes(p.name.toLowerCase()));
+        if (hit) add(awardCategory(label, hit.pos), hit, 'hub');
+      }
+      Object.values(node).forEach(walk);
+    };
+    walk(hub);
+  }
+  const order = { Offensive: 0, Defensive: 1, 'Special Teams': 2, Player: 3 };
+  return [...found.values()].sort((a, b) => order[a.category] - order[b.category]);
+}
+// For /franchise-debug awards: every award-looking key in the hub and on players.
+function describeAwardData(hub, players) {
+  const hubKeys = new Set();
+  const walk = (n, p = '') => { if (Array.isArray(n)) return n.slice(0, 50).forEach(x => walk(x, p)); if (n && typeof n === 'object') for (const [k, v] of Object.entries(n)) { if (/award|week.?of|potw/i.test(k)) hubKeys.add(`${p}${k}`); walk(v, `${p}${k}.`); } };
+  walk(hub);
+  const flagged = (players || []).filter(p => p.awards).slice(0, 5).map(p => `${p.name}: ${JSON.stringify(p.awards).slice(0, 120)}`);
+  return { hubKeys: [...hubKeys].slice(0, 25), playersWithAwardFields: (players || []).filter(p => p.awards).length, sample: flagged, weeklyAwardsActive: findDeep(hub || {}, ['isWeeklyAwardsPeriodActive']) };
 }
 
 // ---- Playoff picture ----------------------------------------------------------------
@@ -403,6 +474,7 @@ function scheduleDifficulty(teamId, gamesByWeek, standingsRows) {
 }
 
 module.exports = {
+  extractWeeklyAwards, describeAwardData, awardCategory, awardFields,
   seasonLeaders, comparePlayers, scheduleDifficulty,
   PLAYOFF_ROUNDS, projectedWildCard, teamSeasonLog, seasonLogLine,
   playoffPicture, teamProfile, ordinal, isHiddenDev, devShown, devEmoji,
