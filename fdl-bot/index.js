@@ -342,8 +342,21 @@ const commands = [
   new SlashCommandBuilder().setName('prospect-maker').setDescription('Post the prospect maker button.').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ];
 
+// Commands that index.js itself handles (captured BEFORE the other modules add theirs).
+// The administrator gate below applies only to these; features.js and teamClaimer.js
+// enforce their own permissions (members use /my-team and /open-teams, moderators with
+// Manage Roles use /setup-nfl-teams, etc.).
+const INDEX_COMMAND_NAMES = new Set(commands.map(c => c.name));
+
 const client = new Client({ intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent] });
-const FDL_FEATURES = require('./features')(client, commands, { GUILD_ID, SCORE_CHANNEL_ID, PROSPECT_CHANNEL_ID, PROSPECT_STATS_CHANNEL_ID, TEAMS, TEAM_ROLE_IDS, normalizeTeam, teamRoleMatches, isAdmin, findScore, scoreMessageText });
+let TEAM_CLAIMER = null; // assigned below; features.js reads it lazily
+const FDL_FEATURES = require('./features')(client, commands, { GUILD_ID, SCORE_CHANNEL_ID, PROSPECT_CHANNEL_ID, PROSPECT_STATS_CHANNEL_ID, TEAMS, TEAM_ROLE_IDS, normalizeTeam, teamRoleMatches, isAdmin, findScore, scoreMessageText,
+  claimerRoleId: team => TEAM_CLAIMER?.roleIdForTeamName(TEAMS[team]?.short) || null });
+// One bot: Team Claimer (claims, waitlist, EA connection) and the EA franchise features
+// (standings, schedule, rosters, leaders, power rankings, free agents, game channels,
+// auto Players of the Week) all run on this same client.
+TEAM_CLAIMER = require('./teamClaimer')(client, commands);
+require('./franchise')(client, commands, { GUILD_ID, SCORE_CHANNEL_ID, TEAMS, normalizeTeam, isAdmin, teamClaimer: TEAM_CLAIMER, features: FDL_FEATURES });
 async function registerCommands(){const rest=new REST({version:'10'}).setToken(TOKEN);await rest.put(Routes.applicationGuildCommands(CLIENT_ID,GUILD_ID),{body:commands.map(c=>c.toJSON())});console.log('Registered league management commands.');}
 client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`);try{await registerCommands();}catch(e){console.error('Slash-command registration failed. Check application ID, guild ID, and bot permissions:',e);}});
 
@@ -358,7 +371,7 @@ client.on('interactionCreate',async i=>{
       return i.respond(TEAM_NAMES.filter(t=>t.toLowerCase().includes(q)||TEAMS[t].short.toLowerCase().includes(q)||TEAMS[t].abbr.toLowerCase().includes(q)).slice(0,25).map(t=>({name:`${TEAMS[t].short} (${TEAMS[t].abbr})`,value:t})));
     }
     if(i.isChatInputCommand()){
-      if(!isAdmin(i)&&!['scout-player','scout-sheet'].includes(i.commandName))return i.reply({content:'You must be an administrator to use this command.',ephemeral:true});
+      if(INDEX_COMMAND_NAMES.has(i.commandName)&&!isAdmin(i))return i.reply({content:'You must be an administrator to use this command.',ephemeral:true});
       if(i.commandName==='game-of-the-week'){ return; }
       if(i.commandName==='draft'){
         const row=new ActionRowBuilder().addComponents(

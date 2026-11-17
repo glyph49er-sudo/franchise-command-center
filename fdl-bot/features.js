@@ -67,7 +67,7 @@ module.exports = function installFeatures(client, commands, ctx) {
     new SlashCommandBuilder().setName('reset-scout-sheets').setDescription('Reset all scouting history.').setDefaultMemberPermissions(admin)
   );
 
-  function findTeamRole(guild,team){const roleIds=read('teamRoles',{});const rid=roleIds[team]||TEAM_ROLE_IDS[team];return rid?guild.roles.cache.get(rid)||null:guild.roles.cache.find(r=>{const n=r.name.toLowerCase();return n.includes(team.toLowerCase())||n.includes(TEAMS[team].short.toLowerCase())||new RegExp(`\\b${TEAMS[team].abbr.toLowerCase()}\\b`).test(n);})||null;}
+  function findTeamRole(guild,team){const roleIds=read('teamRoles',{});const rid=roleIds[team]||TEAM_ROLE_IDS[team]||(ctx.claimerRoleId&&ctx.claimerRoleId(team));return rid?guild.roles.cache.get(rid)||null:guild.roles.cache.find(r=>{const n=r.name.toLowerCase();return n.includes(team.toLowerCase())||n.includes(TEAMS[team].short.toLowerCase())||new RegExp(`\\b${TEAMS[team].abbr.toLowerCase()}\\b`).test(n);})||null;}
   function hasTeamRole(member,team){const role=findTeamRole(member.guild,team);return !!role&&member.roles.cache.has(role.id);}
   function memberHasAnyTeamRole(member){return Object.keys(TEAMS).some(t=>hasTeamRole(member,t));}
   function openTeams(guild){return Object.keys(TEAMS).filter(t=>{const role=findTeamRole(guild,t);return !role||role.members.size===0;});}
@@ -156,6 +156,15 @@ module.exports = function installFeatures(client, commands, ctx) {
         const card=ctx.cards?await ctx.cards.prospectCard({...p,revealed,devKnown,face}).catch(e=>{console.error('[scout card]',e.message);return null;}):null;
         const embed=new EmbedBuilder().setColor(result.type==='full'?0xf1c40f:result.type==='dev'?0x9b59b6:0x1abc9c).setAuthor({name:'FDL Scouting Department'}).setTitle(`🔎 Scout Report — ${p.name}`).setDescription(`**${p.position}** • ${p.college||'—'} • ${p.height||''} ${p.weight||''}\n\n${result.type==='full'?'💎 **FULL REVEAL!** Every rating unlocked.\n':''}${result.type==='full'?'':result.text}`).setFooter({text:`${Object.keys(revealed).length} ratings scouted on this prospect`});
         if(card)embed.setImage('attachment://scout.png');
+        else{
+          // No image renderer is installed, so show the scouted ratings as text bars in the embed itself.
+          const ratingBar=v=>{const n=Math.max(0,Math.min(10,Math.round(Number(v)/10)));return '▰'.repeat(n)+'▱'.repeat(10-n);};
+          const lines=Object.entries(revealed).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`\`${k.padEnd(18).slice(0,18)}\` ${ratingBar(v)} **${v}**`);
+          embed.addFields({name:'Development',value:devKnown?`**${p.dev}**`:'❓ Not scouted yet',inline:true});
+          let chunk='',n=0;
+          for(const line of lines){if((chunk+'\n'+line).length>1000){embed.addFields({name:n?'​':'Scouted ratings',value:chunk});n++;chunk='';}chunk+=(chunk?'\n':'')+line;}
+          if(chunk)embed.addFields({name:n?'​':'Scouted ratings',value:chunk});
+        }
         return i.editReply({embeds:[embed],files:card?[{attachment:card,name:'scout.png'}]:[]});}
       if(i.commandName==='scout-sheet'){const all=read('scouts',{}),rec=all[i.user.id];if(!rec?.history?.length)return i.reply({content:'You have not scouted any players yet.',ephemeral:true});const lines=rec.history.slice().reverse().map(x=>`**${x.name} (${x.position})** — <t:${Math.floor(x.at/1000)}:d>\n${x.text}`);const chunks=[];let cur='**Your Scouting History**';for(const line of lines){if((cur+'\n\n'+line).length>1850){chunks.push(cur);cur='';}cur+=(cur?'\n\n':'')+line;}if(cur)chunks.push(cur);await i.reply({content:chunks[0],ephemeral:true});for(const chunk of chunks.slice(1))await i.followUp({content:chunk,ephemeral:true});return;}
       if(i.commandName==='reset-scout-sheets'){write('scouts',{});return i.reply({content:'All scouting histories and cooldowns have been reset.',ephemeral:true});}

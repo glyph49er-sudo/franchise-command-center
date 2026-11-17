@@ -48,8 +48,14 @@ const WAITLIST_CHANNEL_ID = "1468516639757828156";
 const WAITLIST_ROLE_NAME = "waitlist";
 const WAITLIST_PING_ROLE_ID = process.env.WAITLIST_PING_ROLE_ID || "1543435132596129882";
 
+// The waitlist role can be configured by ID (WAITLIST_COACH_ROLE_ID, shared with the
+// rest of the bot) or found by name. Both historical names are accepted so the merged
+// bot and the old Team Claimer agree on which role is "the waitlist".
+const WAITLIST_ROLE_NAMES = [WAITLIST_ROLE_NAME, process.env.WAITLIST_COACH_ROLE_NAME || "waitlist coach"].map(n => n.toLowerCase());
 function getWaitlistRole(guild) {
-  return guild.roles.cache.find(r => r.name.toLowerCase() === WAITLIST_ROLE_NAME);
+  const configuredId = process.env.WAITLIST_COACH_ROLE_ID;
+  if (configuredId && guild.roles.cache.has(configuredId)) return guild.roles.cache.get(configuredId);
+  return guild.roles.cache.find(r => WAITLIST_ROLE_NAMES.includes(r.name.toLowerCase()));
 }
 
 function hasTeamRole(member) {
@@ -700,7 +706,7 @@ client.on("interactionCreate", async interaction => {
           return interaction.editReply(`✅ EA franchise data refreshed. **${result.teams.length} teams** checked; **${result.leagueOwners}** have an assigned EA username.`);
         } catch (err) {
           eaConnection.lastSyncError = err?.message || String(err); saveEAConnection();
-          return interaction.editReply(`❌ EA refresh failed: ${err?.message || err}\n\nIf the EA session expired, run `/ea-connect` again.`);
+          return interaction.editReply(`❌ EA refresh failed: ${err?.message || err}\n\nIf the EA session expired, run \`/ea-connect\` again.`);
         }
       }
 
@@ -1034,7 +1040,7 @@ client.on("interactionCreate", async interaction => {
         return interaction.editReply({ content: "✅ EA account recognized. Select the Madden PC persona that owns the franchise:", components: [new ActionRowBuilder().addComponents(menu)] });
       } catch (err) {
         console.error("EA initial authorization failed:", err?.message || err);
-        return interaction.editReply(`❌ EA authorization failed: ${err?.message || err}\n\nRun `/ea-connect` and try a fresh login link. The EA login code can only be used once.`);
+        return interaction.editReply(`❌ EA authorization failed: ${err?.message || err}\n\nRun \`/ea-connect\` and try a fresh login link. The EA login code can only be used once.`);
       }
     }
 
@@ -1242,13 +1248,20 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
+function roleIdForTeamName(name) {
+  return Object.keys(config.roles).find(id => String(config.roles[id]?.label).toLowerCase() === String(name || "").toLowerCase()) || null;
+}
+function ownerOfTeamName(name) {
+  const roleId = roleIdForTeamName(name);
+  return roleId ? (config.claims?.[roleId] || null) : null;
+}
+
 return {
   getConnection: () => eaConnection,
   saveConnection: saveEAConnection,
   refreshEAConnection,
-  ownerOfTeamName(name) {
-    const roleId = Object.keys(config.roles).find(id => String(config.roles[id]?.label).toLowerCase() === String(name || "").toLowerCase());
-    return roleId ? (config.claims?.[roleId] || null) : null;
-  }
+  // Team names here are the short names used by teams.js ("Cowboys", "49ers").
+  roleIdForTeamName,
+  ownerOfTeamName
 };
 };

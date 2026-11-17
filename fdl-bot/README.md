@@ -149,3 +149,23 @@ Note: This ZIP intentionally excludes `.env` (which can contain your private bot
 - `/open-teams` creates or refreshes the Team Claimer-style embed in the channel where the command is run. The bot stores that channel/message and edits it automatically when team roles change.
 - The welcome-channel open-teams post is a separate automatic message. It is refreshed from Carl-bot welcome messages and does not require `/open-teams`.
 - Both posts are independent; running the command does not move or replace the welcome-channel post.
+
+## EA franchise commands
+These read the live Madden league through the connection set up with `/ea-connect`.
+
+| Command | What it does |
+| --- | --- |
+| `/standings [conference]` | Division standings with point differential |
+| `/schedule [week] [team]` | A week's games and scores |
+| `/roster team [position]` | Top players for a team (shows the coach) |
+| `/player name` | Face card with overall, dev trait and top ratings (first lookup loads all rosters) |
+| `/leaders category [week]` | Passing / rushing / receiving / tackles / sacks / interceptions leaders |
+| `/power-rankings` | Ranking from record, point differential and team overall |
+| `/free-agents [position]` | Best available free agents |
+| `/game-channels week [category]` | Admin: one channel per game, both coaches pinged |
+| `/auto-potw [week] [force]` | Admin: post Players of the Week from the box scores |
+| `/franchise-debug dataset` | Admin: show the raw field names EA sends |
+
+Optional `.env` settings: `AUTO_POTW=true` (post Players of the Week automatically once a week's games are all final), `POTW_CHANNEL_ID`, `PORTRAIT_URL_TEMPLATE` (use `{id}` for the portrait id, or `none`), `WAITLIST_COACH_ROLE_ID`.
+
+Run the tests with `node --test test/*.test.js`.
