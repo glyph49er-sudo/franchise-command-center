@@ -1,0 +1,205 @@
+{
+  "roles": {
+    "1468514058729816247": {
+      "label": "Ravens",
+      "emoji": ":ravens:",
+      "roleName": "Ravens",
+      "category": "AFC"
+    },
+    "1468514137746440289": {
+      "label": "Bengals",
+      "emoji": ":bengals:",
+      "roleName": "Bengals",
+      "category": "AFC"
+    },
+    "1468514384904196107": {
+      "label": "Browns",
+      "emoji": ":browns:",
+      "roleName": "Browns",
+      "category": "AFC"
+    },
+    "1468514213193580568": {
+      "label": "Steelers",
+      "emoji": ":steelers:",
+      "roleName": "Steelers",
+      "category": "AFC"
+    },
+    "1468514820109369405": {
+      "label": "Bills",
+      "emoji": ":bills:",
+      "roleName": "Bills",
+      "category": "AFC"
+    },
+    "1468514752861831229": {
+      "label": "Dolphins",
+      "emoji": ":dolphins:",
+      "roleName": "Dolphins",
+      "category": "AFC"
+    },
+    "1468514893161431061": {
+      "label": "Patriots",
+      "emoji": ":patriots:",
+      "roleName": "Patriots",
+      "category": "AFC"
+    },
+    "1468514971137609791": {
+      "label": "Jets",
+      "emoji": ":jets:",
+      "roleName": "Jets",
+      "category": "AFC"
+    },
+    "1468515379235000320": {
+      "label": "Texans",
+      "emoji": ":texans:",
+      "roleName": "Texans",
+      "category": "AFC"
+    },
+    "1468515020898828308": {
+      "label": "Colts",
+      "emoji": ":colts:",
+      "roleName": "Colts",
+      "category": "AFC"
+    },
+    "1468515508352581697": {
+      "label": "Jaguars",
+      "emoji": ":jaguars:",
+      "roleName": "Jaguars",
+      "category": "AFC"
+    },
+    "1468515222036811810": {
+      "label": "Titans",
+      "emoji": ":titans:",
+      "roleName": "Titans",
+      "category": "AFC"
+    },
+    "1468514434568949802": {
+      "label": "Broncos",
+      "emoji": ":broncos:",
+      "roleName": "Broncos",
+      "category": "AFC"
+    },
+    "1468514542895108160": {
+      "label": "Chiefs",
+      "emoji": ":chiefs:",
+      "roleName": "Chiefs",
+      "category": "AFC"
+    },
+    "1468514604882595942": {
+      "label": "Raiders",
+      "emoji": ":raiders:",
+      "roleName": "Raiders",
+      "category": "AFC"
+    },
+    "1468514688458555505": {
+      "label": "Chargers",
+      "emoji": ":chargers:",
+      "roleName": "Chargers",
+      "category": "AFC"
+    },
+    "1468513299581636690": {
+      "label": "Cowboys",
+      "emoji": ":cowboys:",
+      "roleName": "Cowboys",
+      "category": "NFC"
+    },
+    "1468513558479241288": {
+      "label": "Giants",
+      "emoji": ":giants:",
+      "roleName": "Giants",
+      "category": "NFC"
+    },
+    "1468513264945201173": {
+      "label": "Eagles",
+      "emoji": ":eagles:",
+      "roleName": "Eagles",
+      "category": "NFC"
+    },
+    "1468513506276933707": {
+      "label": "Commanders",
+      "emoji": ":commanders:",
+      "roleName": "Commanders",
+      "category": "NFC"
+    },
+    "1468513220108226621": {
+      "label": "Bears",
+      "emoji": ":bears:",
+      "roleName": "Bears",
+      "category": "NFC"
+    },
+    "1468513060301049991": {
+      "label": "Lions",
+      "emoji": ":lions:",
+      "roleName": "Lions",
+      "category": "NFC"
+    },
+    "1468513156618911789": {
+      "label": "Packers",
+      "emoji": ":packers:",
+      "roleName": "Packers",
+      "category": "NFC"
+    },
+    "1468513111278485634": {
+      "label": "Vikings",
+      "emoji": ":vikings:",
+      "roleName": "Vikings",
+      "category": "NFC"
+    },
+    "1468513957240377386": {
+      "label": "Falcons",
+      "emoji": ":falcons:",
+      "roleName": "Falcons",
+      "category": "NFC"
+    },
+    "1468513665677267129": {
+      "label": "Panthers",
+      "emoji": ":panthers:",
+      "roleName": "Panthers",
+      "category": "NFC"
+    },
+    "1468513761231896606": {
+      "label": "Saints",
+      "emoji": ":saints:",
+      "roleName": "Saints",
+      "category": "NFC"
+    },
+    "1468513868308549673": {
+      "label": "Buccaneers",
+      "emoji": ":buccaneers:",
+      "roleName": "Buccaneers",
+      "category": "NFC"
+    },
+    "1468512992718225458": {
+      "label": "Cardinals",
+      "emoji": ":cardinals:",
+      "roleName": "Cardinals",
+      "category": "NFC"
+    },
+    "1468512894282109010": {
+      "label": "Rams",
+      "emoji": ":rams:",
+      "roleName": "Rams",
+      "category": "NFC"
+    },
+    "1468512742699831493": {
+      "label": "49ers",
+      "emoji": ":49ers:",
+      "roleName": "49ers",
+      "category": "NFC"
+    },
+    "1468512810635100210": {
+      "label": "Seahawks",
+      "emoji": ":seahawks:",
+      "roleName": "Seahawks",
+      "category": "NFC"
+    }
+  },
+  "claims": {
+    "1468512742699831493": "383341746198806529",
+    "1468512992718225458": "1213733243627765780",
+    "1468513156618911789": "732656616448720957",
+    "1468512810635100210": "1225272316074655837",
+    "1468512894282109010": "701940302314733598",
+    "1468514542895108160": "1500580974897922109"
+  },
+  "verificationChannelId": "1539858003497328640"
+}
