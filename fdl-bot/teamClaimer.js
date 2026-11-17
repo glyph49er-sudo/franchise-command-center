@@ -1361,6 +1361,8 @@ return {
   refreshEAConnection,
   // Team names here are the short names used by teams.js ("Cowboys", "49ers").
   roleIdForTeamName,
+  applyTeamAssignment,
+  finalizeClaim,
   ownerOfTeamName
 };
 };
