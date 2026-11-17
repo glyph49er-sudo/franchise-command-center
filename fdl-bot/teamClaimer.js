@@ -1,4 +1,3 @@
-require("dotenv").config();
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -19,6 +18,7 @@ const {
   StringSelectMenuBuilder
 } = require("discord.js");
 
+module.exports = function installTeamClaimer(client, sharedCommands) {
 const { TEAMS } = require("./teams");
 const EA = require("./ea-connector");
 
@@ -33,12 +33,20 @@ function saveEAConnection() {
   else if (fs.existsSync(EA_CONNECTION_PATH)) fs.unlinkSync(EA_CONNECTION_PATH);
 }
 
-const CONFIG_PATH = path.join(__dirname, "config.json");
+// Team Claimer progress (roles + claims) lives in data/team_claimer_config.json.
+// If an old Team Claimer config.json sits next to the bot, it is imported once.
+const CONFIG_PATH = path.join(__dirname, "data", "team_claimer_config.json");
+const LEGACY_CONFIG_PATH = path.join(__dirname, "config.json");
+if (!fs.existsSync(CONFIG_PATH)) {
+  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+  fs.writeFileSync(CONFIG_PATH, fs.existsSync(LEGACY_CONFIG_PATH) ? fs.readFileSync(LEGACY_CONFIG_PATH, "utf8") : JSON.stringify({ roles: {}, claims: {} }, null, 2));
+}
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
 if (!config.roles) config.roles = {};
 if (!config.claims) config.claims = {};
 const WAITLIST_CHANNEL_ID = "1468516639757828156";
 const WAITLIST_ROLE_NAME = "waitlist";
+const WAITLIST_PING_ROLE_ID = process.env.WAITLIST_PING_ROLE_ID || "1543435132596129882";
 
 function getWaitlistRole(guild) {
   return guild.roles.cache.find(r => r.name.toLowerCase() === WAITLIST_ROLE_NAME);
@@ -57,8 +65,27 @@ if (!config.liveBoards) config.liveBoards = {};
 // Deletes the "<team> is open" waitlist ping for a team (if there is one).
 // Safe to call any number of times — the record is removed first, so a second
 // call is a no-op.
+// Deletes every "<team> is open" ping for this team still in the waitlist channel,
+// including ones posted before the merge or by the old Team Claimer bot (needs Manage Messages).
+async function sweepOpenPings(guild, roleId) {
+  const role = guild.roles.cache.get(roleId);
+  if (!role) return;
+  const channel = await guild.channels.fetch(WAITLIST_CHANNEL_ID).catch(() => null);
+  if (!channel?.isTextBased()) return;
+  const recent = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+  if (!recent) return;
+  const needle = `**${role.name}** is open`.toLowerCase();
+  for (const m of recent.values()) {
+    if (String(m.content || "").toLowerCase().includes(needle)) await m.delete().catch(err => {
+      if (err?.code !== 10008) console.error(`Couldn't delete open ping for ${role.name} (give the bot Manage Messages):`, err?.message || err);
+    });
+  }
+}
+
 async function deleteOpenAnnouncement(guild, roleId) {
   const entry = config.announcements?.[roleId];
+  const teamRole = guild.roles.cache.get(roleId);
+  if (teamRole && teamRole.members.size > 0) await sweepOpenPings(guild, roleId).catch(() => {});
   if (!entry) return;
   delete config.announcements[roleId];
   saveConfig();
@@ -74,8 +101,9 @@ async function deleteOpenAnnouncement(guild, roleId) {
 
 async function announceTeamOpened(guild, role) {
   try {
-    const waitlistRole = getWaitlistRole(guild);
-    if (!waitlistRole || !role) return;
+    if (!role) return;
+    const pingRoleId = guild.roles.cache.has(WAITLIST_PING_ROLE_ID) ? WAITLIST_PING_ROLE_ID : getWaitlistRole(guild)?.id;
+    if (!pingRoleId) return;
 
     const channel = await guild.channels.fetch(WAITLIST_CHANNEL_ID).catch(() => null);
     if (!channel || !channel.isTextBased()) return;
@@ -84,8 +112,8 @@ async function announceTeamOpened(guild, role) {
     await deleteOpenAnnouncement(guild, role.id);
 
     const sent = await channel.send({
-      content: `<@&${waitlistRole.id}> **${role.name}** is open, claim it while you can!!`,
-      allowedMentions: { roles: [waitlistRole.id] }
+      content: `<@&${pingRoleId}> **${role.name}** is open, claim it while you can!!`,
+      allowedMentions: { roles: [pingRoleId] }
     });
     config.announcements[role.id] = { channelId: channel.id, messageId: sent.id };
     saveConfig();
@@ -560,21 +588,12 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("reset-all").setDescription("Admin: completely reset the FDL team league so every team is available again.").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("my-team").setDescription("Show which team you have claimed.")
-].map(c => c.toJSON());
+];
+const CLAIMER_COMMANDS = new Set(commands.map(c => c.name));
+sharedCommands.push(...commands);
 
-const client = new Client({
-  // GuildMembers is required so the bot can see who already holds each team role.
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
-});
 
 client.once("ready", async () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
-  try {
-    await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
-    console.log("Slash commands registered.");
-
-  } catch (err) { console.error("Could not register slash commands:", err); }
 
   // EA franchise ownership is refreshed on startup and every 10 minutes.
   if (eaConnection?.refreshToken && eaConnection?.leagueId) {
@@ -651,7 +670,7 @@ client.on("guildMemberRemove", async member => {
 client.on("interactionCreate", async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
-      if (!interaction.inGuild()) return;
+      if (!interaction.inGuild() || !CLAIMER_COMMANDS.has(interaction.commandName)) return;
 
       if (interaction.commandName === "ea-connect") {
         if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) return interaction.reply({ content: "Only server administrators can connect the franchise EA account.", ephemeral: true });
@@ -928,7 +947,7 @@ client.on("interactionCreate", async interaction => {
               rows.push(row);
             }
             const part = entries.length > 25 ? ` (${Math.floor(start / 25) + 1}/${Math.ceil(entries.length / 25)})` : "";
-            const embed = new EmbedBuilder().setTitle(`${conference} Teams${part}`).setDescription("Click a button to start your claim.\n\n**Each team can only be claimed by ONE member.**\n**Each member can only claim ONE team.**\n\n📸 After entering your EA username, the bot will ask for a screenshot and automatically verify it before giving you the role or changing your nickname.");
+            const embed = new EmbedBuilder().setTitle(`${conference} Teams${part}`).setDescription("Click a button to start your claim.\n\n**Each team can only be claimed by ONE member.**\n**Each member can only claim ONE team.**\n\n🎮 After entering your EA username you'll see the league info. Join the franchise in Madden **first**, then press **Joined** — the bot checks EA live before giving you the role.");
             await interaction.channel.send({ embeds: [embed], components: rows });
             posted++;
           }
@@ -1166,19 +1185,53 @@ client.on("interactionCreate", async interaction => {
       if (!username) return interaction.reply({ content: "Please enter your exact EA username.", ephemeral: true });
       if (!eaConnection?.leagueId) return interaction.reply({ content: "❌ FDL's automatic Madden verification is not connected yet. Ask an administrator to run `/ea-connect`.", ephemeral: true });
 
-      await interaction.deferReply({ ephemeral: true });
+      const leagueName = eaConnection.leagueName || "FDL Connected Franchise";
+      const leagueInfo = new EmbedBuilder()
+        .setColor(data.category === "AFC" ? 0xd50a0a : 0x013369)
+        .setAuthor({ name: "FDL • Team Claim" })
+        .setTitle(`${role.name} — join the league first`)
+        .setDescription([
+          `**League:** ${leagueName}`,
+          `**Platform:** Madden NFL 27 • PC`,
+          `**Team:** ${resolveGuildEmoji(interaction.guild, data.emoji)} ${role.name}`,
+          `**Your EA username:** \`${username}\``,
+          "",
+          "**How to join**",
+          "1. Open Madden NFL 27 → **Franchise** → **Join League** (or accept the invite).",
+          `2. Pick **${leagueName}** and take the **${role.name}**.`,
+          "3. Come back here and press **Joined**.",
+          "",
+          `⚠️ **Do NOT press Joined until you are actually in the league on the ${role.name}.** The bot checks EA directly — if you haven't joined yet you **won't be verified** and nothing will be assigned.`
+        ].join("\n"))
+        .setFooter({ text: "Verification reads the live Madden franchise owner field." });
+      const joinedRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`claimJoined:${roleId}:${username}`.slice(0, 100)).setLabel("Joined").setEmoji("✅").setStyle(ButtonStyle.Success)
+      );
+      return interaction.reply({ embeds: [leagueInfo], components: [joinedRow], ephemeral: true });
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith("claimJoined:")) {
+      if (!interaction.inGuild()) return;
+      const [, roleId, ...rest] = interaction.customId.split(":");
+      const username = rest.join(":");
+      const role = interaction.guild.roles.cache.get(roleId);
+      if (!config.roles[roleId] || !role) return interaction.reply({ content: "That team is no longer configured.", ephemeral: true });
+      if (!eaConnection?.leagueId) return interaction.reply({ content: "❌ FDL's Madden connection is offline. Ask an administrator to run `/ea-connect`.", ephemeral: true });
+      await interaction.deferUpdate();
       try {
-        // Never verify against stale ownership data. Refresh if the latest snapshot is over 15 minutes old.
-        if (!eaConnection.lastSync || Date.now() - eaConnection.lastSync > 15 * 60 * 1000) {
-          await refreshEAConnection("claim-validation");
-        }
+        await refreshEAConnection("claim-joined"); // always fresh: they may have joined seconds ago
         const ownership = EA.findTeamOwner(eaConnection.teams, role.name, username);
-        if (!ownership.ok) return interaction.editReply(`❌ **Madden ownership check failed.**\n\n${ownership.reason}\n\nYour team role and nickname have **not** been changed.`);
+        if (!ownership.ok) {
+          return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xe67e22).setTitle("❌ Not verified yet")
+            .setDescription(`${ownership.reason}\n\nMake sure you've **joined ${eaConnection.leagueName || "the league"}** in Madden on the **${role.name}** with the EA account \`${username}\`, then press **Joined** again.\n\nNo role or nickname was changed.`)],
+            components: interaction.message.components });
+        }
         const finished = await finalizeClaim(interaction.guild, interaction.user.id, roleId, username);
-        return interaction.editReply(`✅ **EA verification passed.**\n\nMadden confirms **${username}** is assigned to **${role.name}** in **${eaConnection.leagueName || "the connected franchise"}**.\n\nYou claimed **${role.name}** and your nickname is now **${finished.nickname}**.${finished.nickNote}`);
+        return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle(`✅ Welcome to the ${role.name}!`)
+          .setDescription(`Madden confirms **${username}** owns the **${role.name}** in **${eaConnection.leagueName || "the connected franchise"}**.\n\nNickname: **${finished.nickname}**${finished.nickNote}`)], components: [] });
       } catch (err) {
         console.error("EA-backed claim verification failed:", err);
-        return interaction.editReply(`❌ I couldn't verify this claim: ${describeError(err)}\n\nNo team role was assigned.`);
+        return interaction.editReply({ content: `❌ I couldn't verify this claim: ${describeError(err)}\n\nNo team role was assigned. Try **Joined** again in a minute.`, embeds: [], components: interaction.message.components });
       }
     }
   } catch (err) {
@@ -1189,17 +1242,13 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN).catch(err => {
-  if (/disallowed intents/i.test(err?.message || "")) {
-    console.error(
-      "Login failed: this bot needs the SERVER MEMBERS INTENT.\n" +
-      "Open https://discord.com/developers/applications -> your app -> Bot -> Privileged Gateway Intents,\n" +
-      "turn ON \"Server Members Intent\", save, then start the bot again.\n" +
-      "Without it the bot cannot tell which teams are already taken."
-    );
-  } else {
-    console.error("Login failed:", err?.message || err);
+return {
+  getConnection: () => eaConnection,
+  saveConnection: saveEAConnection,
+  refreshEAConnection,
+  ownerOfTeamName(name) {
+    const roleId = Object.keys(config.roles).find(id => String(config.roles[id]?.label).toLowerCase() === String(name || "").toLowerCase());
+    return roleId ? (config.claims?.[roleId] || null) : null;
   }
-  process.exit(1);
-});
-
+};
+};
