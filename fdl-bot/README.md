@@ -165,11 +165,17 @@ These read the live Madden league through the connection set up with `/ea-connec
 | `/franchise-hub` | League overview: season/week, claimed coaches, top 5, this week's games |
 | `/team team` | Team profile: record, division and power rank, coach, best players, this week's game |
 | `/playoff-picture [conference]` | Seeds 1-7 per conference plus the bubble (tiebreaks: record, then point differential) |
+| `/playoffs` | Playoff bracket by round (wild card, divisional, conference, Super Bowl); before the playoffs, the projected wild-card round (2v7, 3v6, 4v5) |
+| `/team-schedule team` | A team's 18-week schedule with results |
+| `/trade configure` | Admin: trade channel, committee role, approvals needed, optional accepted/declined channels (saved to `data/trade_config.json`) |
+| `/trade submit team_a team_b …` | Propose a trade (up to 3 players and 3 picks per side, autocompleted). Committee votes with buttons; passes at the required approvals, fails at that many rejections; the submitter can't vote |
 | `/top-players [position]` | Best players in the league by overall, including free agents |
 | `/game-channels week [category]` | Admin: one channel per game, both coaches pinged |
 | `/auto-potw [week] [force]` | Admin: post Players of the Week from the box scores |
 | `/franchise-debug dataset` | Admin: show the raw field names EA sends |
 
-Optional `.env` settings: `AUTO_POTW=true` (post Players of the Week automatically once a week's games are all final), `POTW_CHANNEL_ID`, `PORTRAIT_URL_TEMPLATE` (use `{id}` for the portrait id, or `none`), `WAITLIST_COACH_ROLE_ID`.
+Optional `.env` settings: `AUTO_POTW=true` (post Players of the Week automatically once a week's games are all final), `POTW_CHANNEL_ID`, `PORTRAIT_URL_TEMPLATE` (use `{id}` for the portrait id, or `none`), `WAITLIST_COACH_ROLE_ID`, `HIDDEN_DEVS=false` (by default a rookie's non-Normal dev trait shows as ❔ Hidden, like Snallabot), `MADDEN_SEASON` (default 2026, sets trade pick years).
+
+Snallabot-derived code is MIT licensed; see `SNALLABOT_LICENSE.md`. Not ported (needs Snallabot's own database or external keys): sim confirmations (`/sims`), season-long stat leaders, YouTube/Twitch stream notifiers, the teams board, the web export.
 
 Run the tests with `node --test test/*.test.js`.

@@ -17,6 +17,9 @@ const POTW_CHANNEL_ID = process.env.POTW_CHANNEL_ID || '1468516903096942724';
 // If this URL pattern is wrong for your Madden version, the card simply has no picture;
 // set PORTRAIT_URL_TEMPLATE in .env to fix it (or set it to "none" to turn pictures off).
 const PORTRAIT_URL_TEMPLATE = process.env.PORTRAIT_URL_TEMPLATE || 'https://ratings-images-prod.pulse.ea.com/madden-nfl-27/portraits/{id}.png';
+// Rookies with a non-Normal dev trait show as "Hidden" (Snallabot's default). HIDDEN_DEVS=false shows everything.
+const HIDDEN_DEVS = String(process.env.HIDDEN_DEVS ?? 'true').toLowerCase() !== 'false';
+const devTag = p => { const d = D.devShown(p, HIDDEN_DEVS); return d && d !== 'Normal' ? d : ''; };
 const COLOR = 0x6f35c9;
 const CACHE_MS = 5 * 60 * 1000;
 const ROSTER_CACHE_MS = 15 * 60 * 1000;
@@ -147,6 +150,9 @@ module.exports = function installFranchise(client, commands, ctx) {
       .addStringOption(o => teamOpt(o, 'NFL team').setRequired(true)),
     new SlashCommandBuilder().setName('playoff-picture').setDescription('Current playoff seeds and the bubble.')
       .addStringOption(o => o.setName('conference').setDescription('Show one conference').addChoices({ name: 'AFC', value: 'AFC' }, { name: 'NFC', value: 'NFC' })),
+    new SlashCommandBuilder().setName('playoffs').setDescription('Playoff bracket: results by round, or the projected wild-card round.'),
+    new SlashCommandBuilder().setName('team-schedule').setDescription("A team's full regular-season schedule and results.")
+      .addStringOption(o => teamOpt(o, 'NFL team').setRequired(true)),
     new SlashCommandBuilder().setName('top-players').setDescription('Best players in the league by overall.')
       .addStringOption(o => o.setName('position').setDescription('Filter, e.g. QB, WR, OL, DB')),
     new SlashCommandBuilder().setName('game-channels').setDescription('Admin: create a channel for every game of a week and ping both coaches.')
@@ -162,7 +168,7 @@ module.exports = function installFranchise(client, commands, ctx) {
         .addChoices(...['teams', 'standings', 'schedule', 'roster', 'stats', 'hub'].map(v => ({ name: v, value: v }))))
       .setDefaultMemberPermissions(admin)
   );
-  const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
+  const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
 
   // ---------------------------------------------------------------------------
   // Rendering
@@ -176,10 +182,10 @@ module.exports = function installFranchise(client, commands, ctx) {
 
   function playerCard(p, alsoMatches = []) {
     const e = embed(`${p.name}`, `**${p.pos || '—'}** • ${p.team}${p.jersey !== undefined && p.jersey !== null ? ` • #${p.jersey}` : ''}${p.age ? ` • Age ${p.age}` : ''}`)
-      .setColor(p.dev === 'X-Factor' ? 0xe74c3c : p.dev === 'Superstar' ? 0xf1c40f : p.dev === 'Star' ? 0x3498db : COLOR)
+      .setColor({ 'X-Factor': 0xe74c3c, Superstar: 0xf1c40f, Star: 0x3498db }[D.devShown(p, HIDDEN_DEVS)] || COLOR)
       .addFields(
         { name: 'Overall', value: `**${p.ovr || '—'}** ${D.bar(p.ovr, 12)}`, inline: true },
-        { name: 'Development', value: p.dev || '—', inline: true }
+        { name: 'Development', value: `${D.devEmoji(p, HIDDEN_DEVS)} ${D.devShown(p, HIDDEN_DEVS) || '—'}`, inline: true }
       );
     const top = D.topRatings(p, 8);
     if (top.length) e.addFields({ name: 'Top ratings', value: top.map(([k, v]) => `\`${k.padEnd(18).slice(0, 18)}\` ${D.bar(v, 10)} **${v}**`).join('\n') });
@@ -318,13 +324,48 @@ module.exports = function installFranchise(client, commands, ctx) {
           { name: 'Points', value: `${row.pf} for • ${row.pa} against`, inline: true }
         );
       const roster = await getRoster(team).catch(() => []);
-      if (roster.length) e.addFields({ name: 'Best players', value: roster.sort((a, b) => b.ovr - a.ovr).slice(0, 5).map(p => `**${p.ovr}** ${p.name} (${p.pos})${p.dev && p.dev !== 'Normal' ? ` — ${p.dev}` : ''}`).join('\n') });
+      if (roster.length) e.addFields({ name: 'Best players', value: roster.sort((a, b) => b.ovr - a.ovr).slice(0, 5).map(p => `**${p.ovr}** ${p.name} (${p.pos})${devTag(p) ? ` — ${devTag(p)}` : ''}`).join('\n') });
       const { week } = await getCurrent();
       if (week) {
         const game = (await getGames(week).catch(() => [])).find(g => g.awayId === team.id || g.homeId === team.id);
         if (game) e.addFields({ name: `Week ${week}`, value: D.gameLine(game) });
       }
       return i.editReply({ embeds: [e] });
+    }
+
+    if (name === 'playoffs') {
+      const e = embed('🏆 Playoff Bracket').setFooter({ text: 'Bracket per Snallabot • projection uses current standings' });
+      let any = false;
+      for (const r of D.PLAYOFF_ROUNDS) {
+        const games = await getGames(r.week).catch(() => []);
+        if (!games.length) continue;
+        any = true;
+        e.addFields({ name: r.name, value: games.map(D.gameLine).join('\n').slice(0, 1000) });
+      }
+      if (!any) {
+        const proj = D.projectedWildCard(D.playoffPicture(await getStandings()));
+        for (const conf of ['AFC', 'NFC']) {
+          const p = proj[conf];
+          if (!p.games.length) continue;
+          const lines = p.games.map(g => `(${g.home.seed}) ${g.home.team.name} vs (${g.away.seed}) ${g.away.team.name}`);
+          if (p.bye) lines.push(`🛌 Bye: (1) ${p.bye.team.name}`);
+          e.addFields({ name: `${conf} wild card (projected)`, value: lines.join('\n') });
+        }
+        if (!e.data?.fields?.length) throw new UserError('No standings available yet.');
+      }
+      return i.editReply({ embeds: [e] });
+    }
+
+    if (name === 'team-schedule') {
+      const teams = await getTeams();
+      const input = i.options.getString('team', true);
+      const team = findTeam(teams, input);
+      if (!team) throw new UserError(`I couldn't find a team called "${input}".`);
+      if (!peek(`schedule:${1}`)) await i.editReply('🔎 Loading the season schedule from EA…');
+      const byWeek = {};
+      for (let w = 1; w <= 18; w++) byWeek[w] = await getGames(w).catch(() => []);
+      const log = D.teamSeasonLog(team.id, byWeek);
+      return i.editReply({ content: '', embeds: [embed(`📅 ${team.name} Schedule`, block(log.map(D.seasonLogLine))).setFooter({ text: 'W/L with final score' })] });
     }
 
     if (name === 'playoff-picture') {
@@ -385,7 +426,7 @@ module.exports = function installFranchise(client, commands, ctx) {
       const pos = i.options.getString('position');
       const players = (await getRoster(team)).filter(p => D.matchesPosition(p.pos, pos)).sort((a, b) => b.ovr - a.ovr).slice(0, 20);
       if (!players.length) throw new UserError(`No ${pos ? pos.toUpperCase() + ' ' : ''}players found for the ${team.name}.`);
-      const lines = players.map(p => `${String(p.jersey ?? '').padStart(2)} ${p.name.slice(0, 20).padEnd(20)} ${p.pos.padEnd(4)} ${String(p.ovr).padStart(2)} ${(p.dev && p.dev !== 'Normal' ? p.dev : '').slice(0, 9)}`);
+      const lines = players.map(p => `${String(p.jersey ?? '').padStart(2)} ${p.name.slice(0, 20).padEnd(20)} ${p.pos.padEnd(4)} ${String(p.ovr).padStart(2)} ${(devTag(p) || '').slice(0, 9)}`);
       const owner = ownerOf(team.name);
       return i.editReply({ embeds: [embed(`${team.name} Roster${pos ? ` — ${pos.toUpperCase()}` : ''}`, `${owner ? `Coach: <@${owner}>\n` : ''}${block(lines)}`).setFooter({ text: `Top ${players.length} by overall` })] });
     }
@@ -469,5 +510,24 @@ module.exports = function installFranchise(client, commands, ctx) {
     }
   }
 
-  return { getStandings, getCurrent, postPotw, autoPotwTick };
+  // Roster for an autocomplete: gives up after `ms` so Discord's 3-second limit is never hit.
+  // The fetch keeps running in the background and is cached for the next keystroke.
+  async function rosterWithin(teamInput, ms = 2200) {
+    const work = (async () => {
+      const team = findTeam(await getTeams(), teamInput);
+      return team ? { team, roster: await getRoster(team) } : null;
+    })();
+    work.catch(() => {});
+    return Promise.race([work, new Promise(resolve => setTimeout(() => resolve(null), ms))]).catch(() => null);
+  }
+  const currentSeasonYear = async () => {
+    const { season } = await getCurrent().catch(() => ({}));
+    return Number(process.env.MADDEN_SEASON || 2026) + (Number.isFinite(season) ? season : 0);
+  };
+
+  return {
+    getStandings, getCurrent, getTeams, getRoster, getAllPlayers, getGames, getStats, findTeam, ownerOf,
+    rosterWithin, currentSeasonYear, playerCard, withEA, UserError, embed, hiddenDevs: HIDDEN_DEVS,
+    postPotw, autoPotwTick
+  };
 };

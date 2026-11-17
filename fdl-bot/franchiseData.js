@@ -180,11 +180,18 @@ function normalizePlayer(p, byId = {}) {
     age: pick(p, ['age']),
     jersey: pick(p, ['jerseyNum', 'jerseyNumber']),
     dev: devLabel(pick(p, ['devTrait', 'dev', 'developmentTrait'])),
+    yearsPro: num(pick(p, ['yearsPro', 'yearsInLeague']), 1),
     teamId, team: byId[teamId]?.name || (teamId ? `Team ${teamId}` : 'Free Agent'),
     portraitId: pick(p, ['portraitId']),
     ratings
   };
 }
+// Ported from Snallabot's "hidden devs" setting: a rookie (0 years pro) with a non-Normal
+// development trait shows as Hidden instead of giving the trait away.
+const isHiddenDev = (p, hidden = true) => Boolean(hidden && p && p.yearsPro === 0 && p.dev && p.dev !== 'Normal');
+const devShown = (p, hidden = true) => (isHiddenDev(p, hidden) ? 'Hidden' : (p?.dev || null));
+const DEV_EMOJI = { Normal: '⚪', Star: '⭐', Superstar: '🌟', 'X-Factor': '🔥', Hidden: '❔' };
+const devEmoji = (p, hidden = true) => DEV_EMOJI[devShown(p, hidden)] || '❔';
 const topRatings = (player, n = 8) => Object.entries(player.ratings).sort((a, b) => b[1] - a[1]).slice(0, n);
 
 const POSITION_GROUPS = {
@@ -313,8 +320,41 @@ function teamProfile(team, standingsRows, ranked) {
 }
 const ordinal = n => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
 
+// ---- Ported from Snallabot (bracket.ts / schedule.ts), MIT, see SNALLABOT_LICENSE.md ----
+// Playoff weeks as the bot numbers them (EA weekIndex + 1): 19 wild card, 20 divisional, 21 conference, 23 Super Bowl.
+const PLAYOFF_ROUNDS = [
+  { week: 19, name: 'Wild Card' }, { week: 20, name: 'Divisional' },
+  { week: 21, name: 'Conference Championship' }, { week: 23, name: 'Super Bowl' }
+];
+// Projected wild-card round from the current seeds: 2v7, 3v6, 4v5, seed 1 has a bye.
+function projectedWildCard(pic) {
+  const out = {};
+  for (const conf of ['AFC', 'NFC']) {
+    const s = (pic[conf] && pic[conf].seeds) || [];
+    const at = n => s.find(x => x.seed === n);
+    out[conf] = { bye: at(1) || null, games: [[2, 7], [3, 6], [4, 5]].map(([h, a]) => ({ home: at(h) || null, away: at(a) || null })).filter(g => g.home && g.away) };
+  }
+  return out;
+}
+// Season log for one team across already-normalized games grouped by week: { [week]: games[] }.
+function teamSeasonLog(teamId, gamesByWeek) {
+  const rows = [];
+  for (const week of Object.keys(gamesByWeek).map(Number).sort((a, b) => a - b)) {
+    const g = (gamesByWeek[week] || []).find(x => x.awayId === teamId || x.homeId === teamId);
+    if (!g) { rows.push({ week, bye: true }); continue; }
+    const home = g.homeId === teamId;
+    const opp = home ? g.away : g.home;
+    const my = home ? g.homeScore : g.awayScore, their = home ? g.awayScore : g.homeScore;
+    rows.push({ week, home, opp, final: g.final, my, their, result: !g.final ? null : my > their ? 'W' : my < their ? 'L' : 'T' });
+  }
+  return rows;
+}
+const seasonLogLine = r => r.bye ? `Wk ${String(r.week).padStart(2)}  BYE`
+  : `Wk ${String(r.week).padStart(2)}  ${r.home ? 'vs' : '@ '} ${r.opp.slice(0, 14).padEnd(14)} ${r.final ? `${r.result} ${r.my}-${r.their}` : '—'}`;
+
 module.exports = {
-  playoffPicture, teamProfile, ordinal,
+  PLAYOFF_ROUNDS, projectedWildCard, teamSeasonLog, seasonLogLine,
+  playoffPicture, teamProfile, ordinal, isHiddenDev, devShown, devEmoji,
   NFL, DIVISION_OF, DIVISION_ORDER, DEV_LABELS, LEADER_CATEGORIES,
   pick, num, clip, slug, bar, findDeep, currentWeekFromHub,
   normalizeTeams, teamsById, divisionOf, normalizeStandings, groupStandings, recordText, signed, byRecord, powerRankings,

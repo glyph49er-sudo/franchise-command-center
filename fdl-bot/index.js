@@ -356,7 +356,9 @@ const FDL_FEATURES = require('./features')(client, commands, { GUILD_ID, SCORE_C
 // (standings, schedule, rosters, leaders, power rankings, free agents, game channels,
 // auto Players of the Week) all run on this same client.
 TEAM_CLAIMER = require('./teamClaimer')(client, commands);
-require('./franchise')(client, commands, { GUILD_ID, SCORE_CHANNEL_ID, TEAMS, normalizeTeam, isAdmin, teamClaimer: TEAM_CLAIMER, features: FDL_FEATURES });
+const FRANCHISE = require('./franchise')(client, commands, { GUILD_ID, SCORE_CHANNEL_ID, TEAMS, normalizeTeam, isAdmin, teamClaimer: TEAM_CLAIMER, features: FDL_FEATURES });
+// Ported from Snallabot (MIT, see SNALLABOT_LICENSE.md): trade committee.
+require('./trade')(client, commands, { GUILD_ID, franchise: FRANCHISE });
 async function registerCommands(){const rest=new REST({version:'10'}).setToken(TOKEN);await rest.put(Routes.applicationGuildCommands(CLIENT_ID,GUILD_ID),{body:commands.map(c=>c.toJSON())});console.log('Registered league management commands.');}
 client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`);try{await registerCommands();}catch(e){console.error('Slash-command registration failed. Check application ID, guild ID, and bot permissions:',e);}});
 

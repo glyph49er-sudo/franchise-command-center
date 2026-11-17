@@ -7,8 +7,11 @@
 - [x] Auto Players of the Week from EA stats -> channel 1468516903096942724, @ owner, +3 non-physical claim buttons (`/auto-potw`, or automatic with `AUTO_POTW=true`)
 - [x] Delete "<team> is open" waitlist ping (role 1543435132596129882) when team claimed (`teamClaimer.js`)
 - [x] Fix /mystery-box-checker Given button not removing names (entries are flagged `given` and filtered out)
+- [x] Snallabot features ported onto live EA data: `/trade` committee voting, hidden rookie devs, `/playoffs` bracket (text), `/team-schedule`. Skipped: `/sims`, season stat leaders, stream notifiers (need Snallabot's DB or API keys)
 
 ## Still needs a live check (can't be tested without Discord + EA)
 - [ ] Run `/franchise-debug` for teams, standings, schedule, roster and stats once and confirm names/records look right
 - [ ] Face-card pictures: set `PORTRAIT_URL_TEMPLATE` if the default image URL doesn't load (or `none` to turn pictures off)
 - [ ] Give the bot **Manage Channels** before using `/game-channels`
+- [ ] Try `/trade configure` then `/trade submit`; confirm the bot can post in the trade channel
+- [ ] Check `/playoffs` once playoff weeks exist (assumes weeks 19/20/21/23)

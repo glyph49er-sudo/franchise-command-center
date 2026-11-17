@@ -143,6 +143,16 @@ test('team profile: division and power rank', () => {
   assert.deepStrictEqual([1, 2, 3, 4, 11, 12, 21, 22].map(D.ordinal), ['1st', '2nd', '3rd', '4th', '11th', '12th', '21st', '22nd']);
 });
 
+test('hidden devs: rookies with a non-Normal trait are hidden, everyone else shows', () => {
+  const mk = (devTrait, yearsPro) => D.normalizePlayer({ firstName: 'A', lastName: 'B', position: 'QB', devTrait, yearsPro, playerBestOvr: 70 }, byId);
+  assert.strictEqual(D.devShown(mk(2, 0)), 'Hidden');
+  assert.strictEqual(D.devEmoji(mk(2, 0)), '❔');
+  assert.strictEqual(D.devShown(mk(0, 0)), 'Normal'); // a Normal rookie has nothing to hide
+  assert.strictEqual(D.devShown(mk(3, 2)), 'X-Factor');
+  assert.strictEqual(D.devEmoji(mk(1, 3)), '⭐');
+  assert.strictEqual(D.devShown(mk(2, 0), false), 'Superstar'); // setting turned off
+});
+
 test('small helpers', () => {
   assert.strictEqual(D.bar(91, 10), '▰▰▰▰▰▰▰▰▰▱');
   assert.strictEqual(D.bar(0, 4), '▱▱▱▱');
@@ -150,4 +160,20 @@ test('small helpers', () => {
   assert.strictEqual(D.clip('abcdef', 4), 'abc…');
   assert.strictEqual(D.signed(7), '+7');
   assert.strictEqual(D.signed(-3), '-3');
+});
+
+test('projected wild card is 2v7, 3v6, 4v5 with a bye for seed 1', () => {
+  const seeds = n => Array.from({ length: 7 }, (_, k) => ({ seed: k + 1, team: { name: `${n}${k + 1}` } }));
+  const p = D.projectedWildCard({ AFC: { seeds: seeds('A') }, NFC: { seeds: [] } });
+  assert.deepStrictEqual(p.AFC.games.map(g => [g.home.seed, g.away.seed]), [[2, 7], [3, 6], [4, 5]]);
+  assert.strictEqual(p.AFC.bye.seed, 1);
+  assert.strictEqual(p.NFC.games.length, 0);
+});
+
+test('team season log: home/away, results, byes', () => {
+  const g = (awayId, homeId, a, h, final = true) => ({ awayId, homeId, away: `T${awayId}`, home: `T${homeId}`, awayScore: a, homeScore: h, final });
+  const log = D.teamSeasonLog(1, { 1: [g(2, 1, 10, 20)], 2: [g(1, 3, 7, 7)], 3: [g(4, 5, 0, 0)], 4: [g(1, 6, 0, 0, false)] });
+  assert.deepStrictEqual(log.map(r => r.result || (r.bye ? 'BYE' : '-')), ['W', 'T', 'BYE', '-']);
+  assert.match(D.seasonLogLine(log[0]), /vs T2\s+W 20-10/);
+  assert.match(D.seasonLogLine(log[2]), /BYE/);
 });
