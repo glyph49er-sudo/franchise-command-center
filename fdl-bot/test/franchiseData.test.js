@@ -177,3 +177,43 @@ test('team season log: home/away, results, byes', () => {
   assert.match(D.seasonLogLine(log[0]), /vs T2\s+W 20-10/);
   assert.match(D.seasonLogLine(log[2]), /BYE/);
 });
+
+test('season leaders sum weekly rows per player and respect category', () => {
+  const byId = { 1: { name: 'Cowboys' } };
+  const wk = y => ({ passing: [{ fullName: 'Dak P', teamId: 1, playerId: 9, passYds: y }, { fullName: 'Zero', teamId: 1, playerId: 8, passYds: 0 }] });
+  const out = D.seasonLeaders([wk(250), wk(300), null], 'passing', byId);
+  assert.deepStrictEqual(out, [{ name: 'Dak P', team: 'Cowboys', value: 550, games: 2 }]);
+  assert.deepStrictEqual(D.seasonLeaders([wk(1)], 'nope', byId), []);
+});
+
+test('comparePlayers marks the better side per row', () => {
+  const a = { ovr: 90, age: 25, dev: 'Star', yearsPro: 3, ratings: { Speed: 90, Throw: 80 } };
+  const b = { ovr: 85, age: 30, dev: 'Normal', yearsPro: 8, ratings: { Speed: 80, Throw: 80, Only: 1 } };
+  const rows = D.comparePlayers(a, b);
+  assert.strictEqual(rows.find(r => r.label === 'Overall').win, 'a');
+  assert.strictEqual(rows.find(r => r.label === 'Age').win, 'a');
+  assert.strictEqual(rows.find(r => r.label === 'Speed').win, 'a');
+  assert.strictEqual(rows.find(r => r.label === 'Throw').win, null);
+  assert.ok(!rows.some(r => r.label === 'Only'));
+});
+
+test('scheduleDifficulty averages opponent win% over remaining games', () => {
+  const standings = [{ teamId: 1, winPct: 0.5, ovr: 80 }, { teamId: 2, winPct: 0.8, ovr: 90 }, { teamId: 3, winPct: 0.2, ovr: 70 }];
+  const g = (awayId, homeId, final) => ({ awayId, homeId, away: `T${awayId}`, home: `T${homeId}`, final });
+  const sos = D.scheduleDifficulty(1, { 1: [g(1, 2, true)], 2: [g(3, 1, false)], 3: [g(1, 2, false)], 4: [] }, standings);
+  assert.strictEqual(sos.played.length, 1);
+  assert.strictEqual(sos.remaining.length, 2);
+  assert.ok(Math.abs(sos.remainingWinPct - 0.5) < 1e-9);
+  assert.strictEqual(sos.remainingOvr, 80);
+});
+
+test('bracket helpers: projected wild card 2v7/3v6/4v5, season log', () => {
+  const seeds = n => Array.from({ length: 7 }, (_, k) => ({ seed: k + 1, team: { name: `S${k + 1}` } }));
+  const proj = D.projectedWildCard({ AFC: { seeds: seeds() }, NFC: { seeds: [] } });
+  assert.deepStrictEqual(proj.AFC.games.map(g => [g.home.seed, g.away.seed]), [[2, 7], [3, 6], [4, 5]]);
+  assert.strictEqual(proj.AFC.bye.seed, 1);
+  assert.strictEqual(proj.NFC.games.length, 0);
+  const log = D.teamSeasonLog(1, { 1: [{ awayId: 1, homeId: 2, away: 'A', home: 'B', awayScore: 21, homeScore: 14, final: true }], 2: [] });
+  assert.strictEqual(log[0].result, 'W');
+  assert.strictEqual(log[1].bye, true);
+});

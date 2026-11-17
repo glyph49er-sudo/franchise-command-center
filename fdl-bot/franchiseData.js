@@ -352,7 +352,58 @@ function teamSeasonLog(teamId, gamesByWeek) {
 const seasonLogLine = r => r.bye ? `Wk ${String(r.week).padStart(2)}  BYE`
   : `Wk ${String(r.week).padStart(2)}  ${r.home ? 'vs' : '@ '} ${r.opp.slice(0, 14).padEnd(14)} ${r.final ? `${r.result} ${r.my}-${r.their}` : '—'}`;
 
+// ---- Ideas from Franchise Hub (franchisehub.gg): /stat-leaders, /compare, /schedule-difficulty ----
+// Season leaders: sums each player's weekly rows. Rows are merged by teamId + player id/name.
+function seasonLeaders(statsList, category, byId, limit = 10) {
+  const cat = LEADER_CATEGORIES[category];
+  if (!cat) return [];
+  const merged = new Map();
+  for (const stats of statsList || []) {
+    for (const r of (stats && stats[cat.list]) || []) {
+      const name = playerName(r);
+      if (!name) continue;
+      const teamId = num(pick(r, ['teamId']));
+      const key = `${teamId}|${pick(r, ['playerId', 'rosterId'], name)}`;
+      const e = merged.get(key) || { name, team: (byId[teamId] && byId[teamId].name) || '', value: 0, games: 0 };
+      e.value += num(pick(r, cat.value)); e.games += 1;
+      merged.set(key, e);
+    }
+  }
+  return [...merged.values()].filter(e => e.value > 0).sort((a, b) => b.value - a.value).slice(0, limit);
+}
+
+// Side-by-side rows for two normalized players. Winner per row: 'a' | 'b' | null (tie).
+function comparePlayers(a, b, devOpts = true) {
+  const cmp = (x, y) => (x === y || x == null || y == null ? null : x > y ? 'a' : 'b');
+  const rows = [
+    { label: 'Overall', a: a.ovr, b: b.ovr, win: cmp(a.ovr, b.ovr) },
+    { label: 'Age', a: a.age || '—', b: b.age || '—', win: a.age && b.age && a.age !== b.age ? (a.age < b.age ? 'a' : 'b') : null },
+    { label: 'Dev', a: devShown(a, devOpts) || '—', b: devShown(b, devOpts) || '—', win: null }
+  ];
+  const shared = Object.keys(a.ratings || {}).filter(k => k in (b.ratings || {}));
+  shared.sort((x, y) => Math.abs(b.ratings[y] - a.ratings[y]) - Math.abs(b.ratings[x] - a.ratings[x]) || Math.max(b.ratings[y], a.ratings[y]) - Math.max(b.ratings[x], a.ratings[x]));
+  for (const k of shared.slice(0, 6)) rows.push({ label: k, a: a.ratings[k], b: b.ratings[k], win: cmp(a.ratings[k], b.ratings[k]) });
+  return rows;
+}
+
+// Strength of schedule for one team: average win% of opponents, split into played and remaining.
+// gamesByWeek: { [week]: normalizedGames[] }, standingsRows: normalizeStandings output.
+function scheduleDifficulty(teamId, gamesByWeek, standingsRows) {
+  const pct = Object.fromEntries(standingsRows.map(r => [r.teamId, r.winPct]));
+  const ovr = Object.fromEntries(standingsRows.map(r => [r.teamId, r.ovr]));
+  const out = { played: [], remaining: [] };
+  for (const week of Object.keys(gamesByWeek).map(Number).sort((a, b) => a - b)) {
+    const g = (gamesByWeek[week] || []).find(x => x.awayId === teamId || x.homeId === teamId);
+    if (!g) continue;
+    const home = g.homeId === teamId, oppId = home ? g.awayId : g.homeId;
+    (g.final ? out.played : out.remaining).push({ week, home, oppId, opp: home ? g.away : g.home, winPct: pct[oppId] || 0, ovr: ovr[oppId] || 0 });
+  }
+  const avg = (rows, k) => (rows.length ? rows.reduce((s, r) => s + r[k], 0) / rows.length : null);
+  return { ...out, remainingWinPct: avg(out.remaining, 'winPct'), remainingOvr: avg(out.remaining, 'ovr'), playedWinPct: avg(out.played, 'winPct') };
+}
+
 module.exports = {
+  seasonLeaders, comparePlayers, scheduleDifficulty,
   PLAYOFF_ROUNDS, projectedWildCard, teamSeasonLog, seasonLogLine,
   playoffPicture, teamProfile, ordinal, isHiddenDev, devShown, devEmoji,
   NFL, DIVISION_OF, DIVISION_ORDER, DEV_LABELS, LEADER_CATEGORIES,

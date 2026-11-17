@@ -1,7 +1,5 @@
-# Snallabot license
-
-Parts of the FDL bot (`tradeLogic.js`, `trade.js`, the hidden-dev rule, the playoff bracket, team schedule and the
-command set in `franchise.js`) are ports of ideas and logic from **snallabot-service**, used under the MIT License.
+Portions of this bot (the trade committee, hidden-dev display, playoff bracket and team schedule logic) are
+re-implemented from snallabot-service (https://github.com/snallabot/snallabot-service), used under the MIT License:
 
 MIT License
 

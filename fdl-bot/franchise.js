@@ -142,6 +142,14 @@ module.exports = function installFranchise(client, commands, ctx) {
       .addStringOption(o => o.setName('category').setDescription('Stat').setRequired(true)
         .addChoices(...Object.entries(D.LEADER_CATEGORIES).map(([value, c]) => ({ name: c.label, value }))))
       .addIntegerOption(o => o.setName('week').setDescription('Week number (default: current week)').setMinValue(1).setMaxValue(23)),
+    new SlashCommandBuilder().setName('stat-leaders').setDescription('Season stat leaders (summed from every played week).')
+      .addStringOption(o => o.setName('category').setDescription('Stat').setRequired(true)
+        .addChoices(...Object.entries(D.LEADER_CATEGORIES).map(([value, c]) => ({ name: c.label, value })))),
+    new SlashCommandBuilder().setName('compare').setDescription('Two players side by side.')
+      .addStringOption(o => o.setName('player1').setDescription('First player').setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName('player2').setDescription('Second player').setRequired(true).setAutocomplete(true)),
+    new SlashCommandBuilder().setName('schedule-difficulty').setDescription("How tough a team's schedule is (opponent win % and rating).")
+      .addStringOption(o => teamOpt(o, 'NFL team').setRequired(true)),
     new SlashCommandBuilder().setName('power-rankings').setDescription('FDL power rankings from record, point differential and team rating.'),
     new SlashCommandBuilder().setName('free-agents').setDescription('Best available free agents.')
       .addStringOption(o => o.setName('position').setDescription('Filter, e.g. QB, WR, OL, DB')),
@@ -168,7 +176,7 @@ module.exports = function installFranchise(client, commands, ctx) {
         .addChoices(...['teams', 'standings', 'schedule', 'roster', 'stats', 'hub'].map(v => ({ name: v, value: v }))))
       .setDefaultMemberPermissions(admin)
   );
-  const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
+  const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'stat-leaders', 'compare', 'schedule-difficulty', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
 
   // ---------------------------------------------------------------------------
   // Rendering
@@ -276,7 +284,7 @@ module.exports = function installFranchise(client, commands, ctx) {
       const names = Object.keys(TEAMS).filter(t => !q || t.toLowerCase().includes(q) || TEAMS[t].short.toLowerCase().includes(q) || TEAMS[t].abbr.toLowerCase().includes(q));
       return i.respond(names.slice(0, 25).map(t => ({ name: `${TEAMS[t].short} (${TEAMS[t].abbr})`, value: t })));
     }
-    if (focused.name === 'name') {
+    if (['name', 'player1', 'player2'].includes(focused.name)) {
       const players = peek('allPlayers') || []; // never trigger a slow EA fetch from autocomplete
       if (!q || q.length < 2) return i.respond([]);
       const hits = players.filter(p => p.name.toLowerCase().includes(q)).sort((a, b) => b.ovr - a.ovr).slice(0, 25);
@@ -448,6 +456,56 @@ module.exports = function installFranchise(client, commands, ctx) {
       if (!leaders.length) throw new UserError(`No ${cat.label.toLowerCase()} recorded for week ${week} yet.`);
       const medals = ['🥇', '🥈', '🥉'];
       return i.editReply({ embeds: [embed(`📊 Week ${week} — ${cat.label} Leaders`, leaders.map((l, n) => `${medals[n] || `**${n + 1}.**`} **${l.name}** (${l.team}) — **${l.value}** · ${l.detail}`).join('\n'))] });
+    }
+
+    if (name === 'stat-leaders') {
+      const category = i.options.getString('category', true), cat = D.LEADER_CATEGORIES[category];
+      const { week } = await getCurrent();
+      const last = Math.min(week || 18, 18);
+      if (!peek(`stats:${last}`)) await i.editReply('🔎 Adding up the season from EA…');
+      const teams = await getTeams();
+      const list = [];
+      for (let w = 1; w <= last; w++) list.push(await getStats(w).catch(() => null));
+      const leaders = D.seasonLeaders(list, category, D.teamsById(teams));
+      if (!leaders.length) throw new UserError(`No ${cat.label.toLowerCase()} recorded this season yet.`);
+      const medals = ['🥇', '🥈', '🥉'];
+      return i.editReply({ content: '', embeds: [embed(`📊 Season ${cat.label} Leaders`, leaders.map((l, n) => `${medals[n] || `**${n + 1}.**`} **${l.name}** (${l.team}) — **${l.value}** in ${l.games} game${l.games === 1 ? '' : 's'}`).join('\n')).setFooter({ text: `Weeks 1-${last}` })] });
+    }
+
+    if (name === 'compare') {
+      if (!peek('allPlayers')) await i.editReply('🔎 Loading every roster from EA — the first lookup takes a minute…');
+      const all = await getAllPlayers();
+      const find = q => {
+        const s = q.toLowerCase().trim();
+        return all.filter(p => p.name.toLowerCase().includes(s)).sort((a, b) => (b.name.toLowerCase() === s) - (a.name.toLowerCase() === s) || b.ovr - a.ovr)[0];
+      };
+      const [q1, q2] = [i.options.getString('player1', true), i.options.getString('player2', true)];
+      const a = find(q1), b = find(q2);
+      if (!a || !b) throw new UserError(`I couldn't find ${!a ? `"${q1}"` : `"${q2}"`}.`);
+      const rows = D.comparePlayers(a, b, HIDDEN_DEVS);
+      const mark = (r, side) => (r.win === side ? '✅' : '  ');
+      const lines = rows.map(r => `${mark(r, 'a')}${String(r.a).padStart(7)} │ ${r.label.slice(0, 16).padEnd(16)} │ ${String(r.b).padEnd(7)}${mark(r, 'b')}`);
+      return i.editReply({ content: '', embeds: [embed(`${a.name} vs ${b.name}`, `**${a.name}** — ${a.pos}, ${a.team}\n**${b.name}** — ${b.pos}, ${b.team}\n${block(lines)}`)] });
+    }
+
+    if (name === 'schedule-difficulty') {
+      const teams = await getTeams();
+      const input = i.options.getString('team', true);
+      const team = findTeam(teams, input);
+      if (!team) throw new UserError(`I couldn't find a team called "${input}".`);
+      if (!peek('schedule:1')) await i.editReply('🔎 Loading the season schedule from EA…');
+      const byWeek = {};
+      for (let w = 1; w <= 18; w++) byWeek[w] = await getGames(w).catch(() => []);
+      const sos = D.scheduleDifficulty(team.id, byWeek, await getStandings());
+      const pct = v => (v === null ? '—' : `${(v * 100).toFixed(1)}%`);
+      if (!sos.remaining.length && !sos.played.length) throw new UserError('No schedule data available yet.');
+      const e = embed(`🧗 ${team.name} Schedule Difficulty`)
+        .addFields(
+          { name: 'Remaining', value: `Opp win%: **${pct(sos.remainingWinPct)}**\nOpp OVR: **${sos.remainingOvr === null ? '—' : sos.remainingOvr.toFixed(1)}**\n${sos.remaining.length} games`, inline: true },
+          { name: 'Played', value: `Opp win%: **${pct(sos.playedWinPct)}**\n${sos.played.length} games`, inline: true }
+        );
+      if (sos.remaining.length) e.addFields({ name: 'Toughest remaining', value: block([...sos.remaining].sort((a, b) => b.winPct - a.winPct).slice(0, 5).map(r => `Wk ${String(r.week).padStart(2)} ${r.home ? 'vs' : '@ '} ${r.opp.slice(0, 14).padEnd(14)} ${pct(r.winPct)}`)) });
+      return i.editReply({ content: '', embeds: [e] });
     }
 
     if (name === 'power-rankings') {
