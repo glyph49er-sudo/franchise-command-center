@@ -370,6 +370,43 @@ const MEMBER_LIST_HELP =
   "Ask an admin to enable **Server Members Intent** for the bot in the Discord Developer Portal " +
   "(Bot → Privileged Gateway Intents), then restart the bot.";
 
+// ONE code path for putting a member on a team. /teams assign, /verify-member and the
+// EA-verified claim flow (finalizeClaim) all end here, so they always behave identically:
+// move them off any other team, give the team role, record the claim, take the "is open"
+// ping down, drop the waitlist role, set the "Team [Username]" nickname, refresh live boards.
+// Callers hold the guild lock and have already checked who currently owns the role.
+async function applyTeamAssignment(guild, member, role, { username, reason }) {
+  const clean = cleanUsername(username) || member.user.username;
+  const nickname = `${role.name} [${clean}]`;
+  if (nickname.length > 32) throw new Error(`**${nickname}** is ${nickname.length} characters — Discord nicknames max out at 32. That username is too long for the Team [Username] format.`);
+
+  const oldTeams = configuredTeamRolesOf(member).filter(r => r.id !== role.id);
+  if (oldTeams.size) {
+    await member.roles.remove([...oldTeams.keys()], `${reason} (moved teams)`);
+    for (const oldRole of oldTeams.values()) clearClaim(oldRole.id);
+  }
+  if (!member.roles.cache.has(role.id)) await member.roles.add(role, reason);
+  setClaim(role.id, member.id);
+  await deleteOpenAnnouncement(guild, role.id); // team is taken — pull the waitlist ping down
+
+  let notes = "";
+  const waitlistRole = getWaitlistRole(guild);
+  if (waitlistRole && member.roles.cache.has(waitlistRole.id)) {
+    try { await member.roles.remove(waitlistRole, `Removed from waitlist after claiming ${role.name}`); }
+    catch (err) { notes += `\n⚠️ Couldn't remove their **waitlist** role: ${describeError(err)}`; }
+  }
+  try {
+    await member.setNickname(nickname, reason);
+  } catch (err) {
+    const seconds = registerRateLimit(err);
+    notes += seconds != null
+      ? `\n⚠️ Discord rate-limited the nickname change. The team role was assigned; set the nickname to \`${nickname}\` after the cooldown.`
+      : `\n⚠️ The team role was assigned, but I couldn't change the nickname (${describeError(err)}). Set it to \`${nickname}\` manually.`;
+  }
+  scheduleBoardRefresh(guild);
+  return { nickname, nickNote: notes, oldTeams };
+}
+
 async function finalizeClaim(guild, userId, roleId, username) {
   return withGuildLock(guild.id, async () => {
     const role = guild.roles.cache.get(roleId);
@@ -391,36 +428,8 @@ async function finalizeClaim(guild, userId, roleId, username) {
     if (!verified) throw new Error(MEMBER_LIST_HELP);
 
 
-    await member.roles.add(role, `Verified NFL team claim by ${member.user.tag}`);
-    setClaim(roleId, userId);
-    await deleteOpenAnnouncement(guild, roleId); // team is taken — pull the waitlist ping down
-
-    let waitlistNote = "";
-    const waitlistRole = getWaitlistRole(guild);
-    if (waitlistRole && member.roles.cache.has(waitlistRole.id)) {
-      try {
-        await member.roles.remove(waitlistRole, `Removed from waitlist after claiming ${role.name}`);
-      } catch (err) {
-        waitlistNote = `\n⚠️ I couldn't remove your **waitlist** role automatically: ${describeError(err)}`;
-      }
-    }
-
-    const nickname = `${role.name} [${username}]`;
-    if (nickname.length > 32) {
-      await member.roles.remove(role, "Rollback: nickname would exceed Discord's 32-character limit");
-      clearClaim(roleId);
-      throw new Error("That username is too long for the Team [Username] Discord nickname format.");
-    }
-
-    try {
-      await member.setNickname(nickname, `Verified team claim by ${member.user.tag}`);
-    } catch (err) {
-      const seconds = registerRateLimit(err);
-      return { nickname, nickNote: seconds != null
-        ? `\n⚠️ Discord rate-limited the nickname change. The team role was assigned, but a moderator may need to set your nickname to \`${nickname}\` after the cooldown.`
-        : `\n⚠️ The team role was assigned, but I couldn't change your nickname: ${describeError(err)}` };
-    }
-    return { nickname, nickNote: waitlistNote };
+    const { nickname, nickNote } = await applyTeamAssignment(guild, member, role, { username, reason: `Verified NFL team claim by ${member.user.tag}` });
+    return { nickname, nickNote };
   });
 }
 
@@ -762,32 +771,8 @@ client.on("interactionCreate", async interaction => {
             }
             if (!holder && !verified) return interaction.editReply({ content: MEMBER_LIST_HELP });
 
-            // Moving them off any other team they hold.
-            const oldTeams = configuredTeamRolesOf(member).filter(r => r.id !== teamRole.id);
-            if (oldTeams.size) {
-              await member.roles.remove([...oldTeams.keys()], `Admin verification moved team by ${interaction.user.tag}`);
-              for (const oldRole of oldTeams.values()) clearClaim(oldRole.id);
-            }
-
-            if (!member.roles.cache.has(teamRole.id)) {
-              await member.roles.add(teamRole, `Admin verification by ${interaction.user.tag}`);
-            }
-            setClaim(teamRole.id, targetUser.id);
-            await deleteOpenAnnouncement(interaction.guild, teamRole.id);
-
-            let notes = "";
-            const waitlistRole = getWaitlistRole(interaction.guild);
-            if (waitlistRole && member.roles.cache.has(waitlistRole.id)) {
-              try { await member.roles.remove(waitlistRole, "Removed from waitlist after admin team assignment"); }
-              catch (err) { notes += `\n⚠️ Couldn't remove their **waitlist** role: ${describeError(err)}`; }
-            }
-
-            try {
-              await member.setNickname(nickname, `Admin verification by ${interaction.user.tag}`);
-            } catch (err) {
-              registerRateLimit(err);
-              notes += `\n⚠️ The team role was assigned, but I couldn't change their nickname (${describeError(err)}). Set it to \`${nickname}\` manually.`;
-            }
+            const { nickNote, oldTeams } = await applyTeamAssignment(interaction.guild, member, teamRole, { username: eaUsername, reason: `Admin verification by ${interaction.user.tag}` });
+            const notes = nickNote;
 
             const moved = oldTeams.size ? `\n**Moved off:** ${oldTeams.map(r => r.name).join(", ")}` : "";
             return interaction.editReply({ content: `✅ **Admin verification complete.**\n\n**Member:** ${targetUser}\n**Team:** ${teamRole.name}\n**EA Username:** ${eaUsername}\n**Nickname:** ${nickname}${moved}${notes}` });
@@ -972,18 +957,11 @@ client.on("interactionCreate", async interaction => {
             const { holder } = await findRoleHolder(guild, role);
             if (holder && holder.id !== user.id) return interaction.editReply(`❌ **${role.name}** is already assigned to ${holder}. Run \`/teams free\` on it first.`);
             const member = await guild.members.fetch(user.id);
-            const old = configuredTeamRolesOf(member).filter(r => r.id !== role.id);
-            if (old.size) { await member.roles.remove([...old.keys()], `Moved to ${role.name} by ${interaction.user.tag}`); for (const r of old.values()) clearClaim(r.id); }
-            await member.roles.add(role, `Assigned by ${interaction.user.tag}`);
-            setClaim(role.id, user.id);
-            await deleteOpenAnnouncement(guild, role.id);
-            let note = "";
-            const wl = getWaitlistRole(guild);
-            if (wl && member.roles.cache.has(wl.id)) await member.roles.remove(wl, `Assigned ${role.name}`).catch(() => { note += "\n⚠️ Couldn't remove their waitlist role."; });
-            const tag = (member.nickname || "").match(/\[(.+)\]\s*$/)?.[1] || user.username;
-            const nick = `${role.name} [${tag}]`;
-            if (nick.length <= 32) await member.setNickname(nick, `Assigned ${role.name}`).catch(() => { note += `\n⚠️ Couldn't set their nickname to \`${nick}\`.`; });
-            scheduleBoardRefresh(guild);
+            const botMember = await guild.members.fetchMe();
+            if (role.position >= botMember.roles.highest.position) return interaction.editReply(`❌ I can't assign **${role.name}** because my bot role isn't above it.`);
+            const current = (member.nickname || "").match(/\[(.+)\]\s*$/)?.[1];
+            const { nickNote, oldTeams: old } = await applyTeamAssignment(guild, member, role, { username: current || user.username, reason: `Assigned by ${interaction.user.tag}` });
+            const note = nickNote;
             return interaction.editReply(`✅ ${user} is now the coach of **${role.name}**.${old.size ? ` (moved off ${old.map(r => r.name).join(", ")})` : ""}${note}`);
           });
         }
