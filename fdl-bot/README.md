@@ -146,6 +146,7 @@ The score watcher recognizes Snallabot score lines in the form `Cowboys 35 vs 26
 Note: This ZIP intentionally excludes `.env` (which can contain your private bot token) and `node_modules`. Run `npm install` after extracting it.
 
 ### Open teams posts
+- `/simple-open-teams` (admin) posts the compact **FDL | Open Teams** card (open teams as `Name · ABBR`, with a count footer) in the current channel. One card per channel; running it again there edits the same message, and it refreshes automatically when teams are claimed or opened.
 - `/open-teams` creates or refreshes the Team Claimer-style embed in the channel where the command is run. The bot stores that channel/message and edits it automatically when team roles change.
 - The welcome-channel open-teams post is a separate automatic message. It is refreshed from Carl-bot welcome messages and does not require `/open-teams`.
 - Both posts are independent; running the command does not move or replace the welcome-channel post.
