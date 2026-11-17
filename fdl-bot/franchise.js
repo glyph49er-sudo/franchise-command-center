@@ -18,7 +18,11 @@ const POTW_CHANNEL_ID = process.env.POTW_CHANNEL_ID || '1468516903096942724';
 // set PORTRAIT_URL_TEMPLATE in .env to fix it (or set it to "none" to turn pictures off).
 const PORTRAIT_URL_TEMPLATE = process.env.PORTRAIT_URL_TEMPLATE || 'https://ratings-images-prod.pulse.ea.com/madden-nfl-27/portraits/{id}.png';
 // Rookies with a non-Normal dev trait show as "Hidden" (Snallabot's default). HIDDEN_DEVS=false shows everything.
-const HIDDEN_DEVS = String(process.env.HIDDEN_DEVS ?? 'true').toLowerCase() !== 'false';
+const PLAYER_CONFIG = path.join(__dirname, 'data', 'player_config.json');
+// /player_configuration configure hidden_devs overrides the HIDDEN_DEVS env setting and survives restarts.
+let HIDDEN_DEVS = String(process.env.HIDDEN_DEVS ?? 'true').toLowerCase() !== 'false';
+try { const c = JSON.parse(fs.readFileSync(PLAYER_CONFIG, 'utf8')); if (typeof c.hiddenDevs === 'boolean') HIDDEN_DEVS = c.hiddenDevs; } catch { /* no saved setting */ }
+function setHiddenDevs(v) { HIDDEN_DEVS = Boolean(v); fs.mkdirSync(path.dirname(PLAYER_CONFIG), { recursive: true }); fs.writeFileSync(PLAYER_CONFIG, JSON.stringify({ hiddenDevs: HIDDEN_DEVS })); }
 const devTag = p => { const d = D.devShown(p, HIDDEN_DEVS); return d && d !== 'Normal' ? d : ''; };
 const COLOR = 0x6f35c9;
 const CACHE_MS = 5 * 60 * 1000;
@@ -142,6 +146,16 @@ module.exports = function installFranchise(client, commands, ctx) {
       .addStringOption(o => o.setName('category').setDescription('Stat').setRequired(true)
         .addChoices(...Object.entries(D.LEADER_CATEGORIES).map(([value, c]) => ({ name: c.label, value }))))
       .addIntegerOption(o => o.setName('week').setDescription('Week number (default: current week)').setMinValue(1).setMaxValue(23)),
+    new SlashCommandBuilder().setName('stats').setDescription('Player stat leaders for your league (Snallabot style).')
+      .addSubcommand(s => s.setName('weekly').setDescription('Weekly stat leaders')
+        .addStringOption(o => o.setName('stat_type').setDescription('passing, rushing, receiving, tackles...').setRequired(true).addChoices(...Object.entries(D.LEADER_CATEGORIES).map(([value, c]) => ({ name: c.label, value }))))
+        .addIntegerOption(o => o.setName('week').setDescription('Optional week (default: current)').setMinValue(1).setMaxValue(23)))
+      .addSubcommand(s => s.setName('season').setDescription('Season stat leaders')
+        .addStringOption(o => o.setName('stat_type').setDescription('passing, rushing, receiving, tackles...').setRequired(true).addChoices(...Object.entries(D.LEADER_CATEGORIES).map(([value, c]) => ({ name: c.label, value }))))),
+    new SlashCommandBuilder().setName('player_configuration').setDescription('Configure the players commands in your league (admin).')
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+      .addSubcommand(s => s.setName('configure').setDescription('Settings for players')
+        .addBooleanOption(o => o.setName('hidden_devs').setDescription('Show rookies\' dev traits as Hidden (true) or reveal them (false)').setRequired(true))),
     new SlashCommandBuilder().setName('stat-leaders').setDescription('Season stat leaders (summed from every played week).')
       .addStringOption(o => o.setName('category').setDescription('Stat').setRequired(true)
         .addChoices(...Object.entries(D.LEADER_CATEGORIES).map(([value, c]) => ({ name: c.label, value })))),
@@ -176,7 +190,7 @@ module.exports = function installFranchise(client, commands, ctx) {
         .addChoices(...['teams', 'standings', 'schedule', 'roster', 'stats', 'hub'].map(v => ({ name: v, value: v }))))
       .setDefaultMemberPermissions(admin)
   );
-  const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'stat-leaders', 'compare', 'schedule-difficulty', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
+  const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'stats', 'player_configuration', 'stat-leaders', 'compare', 'schedule-difficulty', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
 
   // ---------------------------------------------------------------------------
   // Rendering
@@ -448,8 +462,8 @@ module.exports = function installFranchise(client, commands, ctx) {
       return i.editReply({ content: '', embeds: [playerCard(hits[0], hits.slice(1))] });
     }
 
-    if (name === 'leaders') {
-      const category = i.options.getString('category', true), cat = D.LEADER_CATEGORIES[category];
+    if (name === 'leaders' || (name === 'stats' && i.options.getSubcommand() === 'weekly')) {
+      const category = i.options.getString('category') ?? i.options.getString('stat_type', true), cat = D.LEADER_CATEGORIES[category];
       const week = await resolveWeek(i.options.getInteger('week'));
       const teams = await getTeams();
       const leaders = D.weeklyLeaders(await getStats(week), category, D.teamsById(teams));
@@ -458,8 +472,14 @@ module.exports = function installFranchise(client, commands, ctx) {
       return i.editReply({ embeds: [embed(`📊 Week ${week} — ${cat.label} Leaders`, leaders.map((l, n) => `${medals[n] || `**${n + 1}.**`} **${l.name}** (${l.team}) — **${l.value}** · ${l.detail}`).join('\n'))] });
     }
 
-    if (name === 'stat-leaders') {
-      const category = i.options.getString('category', true), cat = D.LEADER_CATEGORIES[category];
+    if (name === 'player_configuration') {
+      if (!i.memberPermissions?.has(PermissionFlagsBits.Administrator)) throw new UserError('Administrator access required.');
+      setHiddenDevs(i.options.getBoolean('hidden_devs', true));
+      return i.editReply(`Hidden rookie dev traits are now **${HIDDEN_DEVS ? 'ON' : 'OFF'}**.`);
+    }
+
+    if (name === 'stat-leaders' || (name === 'stats' && i.options.getSubcommand() === 'season')) {
+      const category = i.options.getString('category') ?? i.options.getString('stat_type', true), cat = D.LEADER_CATEGORIES[category];
       const { week } = await getCurrent();
       const last = Math.min(week || 18, 18);
       if (!peek(`stats:${last}`)) await i.editReply('🔎 Adding up the season from EA…');
@@ -585,7 +605,7 @@ module.exports = function installFranchise(client, commands, ctx) {
 
   return {
     getStandings, getCurrent, getTeams, getRoster, getAllPlayers, getGames, getStats, findTeam, ownerOf,
-    rosterWithin, currentSeasonYear, playerCard, withEA, UserError, embed, hiddenDevs: HIDDEN_DEVS,
+    rosterWithin, currentSeasonYear, playerCard, withEA, UserError, embed, get hiddenDevs() { return HIDDEN_DEVS; },
     postPotw, autoPotwTick
   };
 };

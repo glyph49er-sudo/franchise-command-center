@@ -593,7 +593,28 @@ const commands = [
     .setDescription("Admin: list everyone currently on the waitlist.")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("reset-all").setDescription("Admin: completely reset the FDL team league so every team is available again.").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("my-team").setDescription("Show which team you have claimed.")
+  new SlashCommandBuilder().setName("my-team").setDescription("Show which team you have claimed."),
+  // ---- Snallabot-style command groups (see SNALLABOT_LICENSE.md), backed by FDL's team roles ----
+  new SlashCommandBuilder().setName("teams").setDescription("Assign or free teams, post the teams board, or reset every team.")
+    .addSubcommand(sc => sc.setName("assign").setDescription("Assign a Discord user to the specified team")
+      .addRoleOption(o => o.setName("team").setDescription("The NFL team role").setRequired(true))
+      .addUserOption(o => o.setName("user").setDescription("The member to assign to this team").setRequired(true)))
+    .addSubcommand(sc => sc.setName("free").setDescription("Remove the user assigned to this team, making the team open")
+      .addRoleOption(o => o.setName("team").setDescription("The NFL team role").setRequired(true)))
+    .addSubcommand(sc => sc.setName("configure").setDescription("Post the live teams board in a channel (updates automatically)")
+      .addChannelOption(o => o.setName("channel").setDescription("Channel for the board (default: here)")))
+    .addSubcommand(sc => sc.setName("reset").setDescription("Reset all team assignments, making every team open (Administrator)"))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+  new SlashCommandBuilder().setName("waitlist").setDescription("Handle the league waitlist: list, add, remove, pop")
+    .addSubcommand(sc => sc.setName("list").setDescription("List the users currently on the waitlist"))
+    .addSubcommand(sc => sc.setName("add").setDescription("Add a user to the waitlist")
+      .addUserOption(o => o.setName("user").setDescription("User to add").setRequired(true))
+      .addIntegerOption(o => o.setName("position").setDescription("Position in line (default: end)").setMinValue(1)))
+    .addSubcommand(sc => sc.setName("remove").setDescription("Remove a user from the waitlist")
+      .addUserOption(o => o.setName("user").setDescription("User to remove").setRequired(true)))
+    .addSubcommand(sc => sc.setName("pop").setDescription("Remove a user by position (default: first in line)")
+      .addIntegerOption(o => o.setName("position").setDescription("Position to remove").setMinValue(1)))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
 ];
 const CLAIMER_COMMANDS = new Set(commands.map(c => c.name));
 sharedCommands.push(...commands);
@@ -909,6 +930,106 @@ client.on("interactionCreate", async interaction => {
 
       if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles) && !["open-teams", "post-open-teams"].includes(interaction.commandName)) {
         return interaction.reply({ content: "You need **Manage Roles** to use this command.", ephemeral: true });
+      }
+
+      if (interaction.commandName === "teams") {
+        const sub = interaction.options.getSubcommand();
+        await interaction.deferReply({ ephemeral: true });
+        const guild = interaction.guild;
+        if (sub === "reset") {
+          if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) return interaction.editReply("❌ Only administrators can reset every team.");
+          const r = await resetAllTeams(guild);
+          return interaction.editReply(`✅ All teams reset: **${r.rolesRemoved}** team role${r.rolesRemoved === 1 ? "" : "s"} removed, **${r.claimsCleared}** claim${r.claimsCleared === 1 ? "" : "s"} cleared.${r.failures.length ? `\n⚠️ ${r.failures.length} item(s) could not be fully reset.` : ""}`);
+        }
+        if (sub === "configure") {
+          if (!(await ensureMembers(guild, { force: true }))) return interaction.editReply(MEMBER_LIST_HELP);
+          const channel = interaction.options.getChannel("channel") || interaction.channel;
+          const target = await guild.channels.fetch(channel.id);
+          const previous = config.liveBoards[target.id];
+          if (previous) await target.messages.delete(previous.messageId).catch(() => {});
+          const posted = await target.send({ embeds: [buildBoardEmbed(guild)] });
+          config.liveBoards[target.id] = { guildId: guild.id, messageId: posted.id };
+          saveConfig();
+          return interaction.editReply(`✅ The teams board is posted in <#${target.id}> and updates automatically.`);
+        }
+        const role = interaction.options.getRole("team", true);
+        if (!config.roles[role.id]) return interaction.editReply("That role isn't configured as an NFL team role (run `/setup-nfl-teams` first).");
+        if (!(await ensureMembers(guild, { force: true }))) return interaction.editReply(MEMBER_LIST_HELP);
+        if (sub === "free") {
+          return withGuildLock(guild.id, async () => {
+            const { holder } = await findRoleHolder(guild, role);
+            if (!holder) { clearClaim(role.id); return interaction.editReply(`**${role.name}** is already open.`); }
+            await holder.roles.remove(role, `Freed by ${interaction.user.tag}`);
+            clearClaim(role.id);
+            await deleteOpenAnnouncement(guild, role.id);
+            scheduleBoardRefresh(guild);
+            return interaction.editReply(`✅ **${role.name}** is now open (was ${holder}).`);
+          });
+        }
+        if (sub === "assign") {
+          const user = interaction.options.getUser("user", true);
+          return withGuildLock(guild.id, async () => {
+            const { holder } = await findRoleHolder(guild, role);
+            if (holder && holder.id !== user.id) return interaction.editReply(`❌ **${role.name}** is already assigned to ${holder}. Run \`/teams free\` on it first.`);
+            const member = await guild.members.fetch(user.id);
+            const old = configuredTeamRolesOf(member).filter(r => r.id !== role.id);
+            if (old.size) { await member.roles.remove([...old.keys()], `Moved to ${role.name} by ${interaction.user.tag}`); for (const r of old.values()) clearClaim(r.id); }
+            await member.roles.add(role, `Assigned by ${interaction.user.tag}`);
+            setClaim(role.id, user.id);
+            await deleteOpenAnnouncement(guild, role.id);
+            let note = "";
+            const wl = getWaitlistRole(guild);
+            if (wl && member.roles.cache.has(wl.id)) await member.roles.remove(wl, `Assigned ${role.name}`).catch(() => { note += "\n⚠️ Couldn't remove their waitlist role."; });
+            const tag = (member.nickname || "").match(/\[(.+)\]\s*$/)?.[1] || user.username;
+            const nick = `${role.name} [${tag}]`;
+            if (nick.length <= 32) await member.setNickname(nick, `Assigned ${role.name}`).catch(() => { note += `\n⚠️ Couldn't set their nickname to \`${nick}\`.`; });
+            scheduleBoardRefresh(guild);
+            return interaction.editReply(`✅ ${user} is now the coach of **${role.name}**.${old.size ? ` (moved off ${old.map(r => r.name).join(", ")})` : ""}${note}`);
+          });
+        }
+      }
+
+      if (interaction.commandName === "waitlist") {
+        const sub = interaction.options.getSubcommand();
+        await interaction.deferReply({ ephemeral: true });
+        const guild = interaction.guild, wl = getWaitlistRole(guild);
+        if (!wl) return interaction.editReply("I couldn't find the **waitlist** role. Create it, or set `WAITLIST_COACH_ROLE_ID` in `.env`.");
+        if (!(await ensureMembers(guild, { force: true }))) return interaction.editReply(MEMBER_LIST_HELP);
+        const holders = guild.members.cache.filter(m => m.roles.cache.has(wl.id));
+        const orderPath = path.join(__dirname, "data", "waitlist_order.json");
+        let order = [];
+        try { order = JSON.parse(fs.readFileSync(orderPath, "utf8")); } catch {}
+        const queue = () => [...order.filter(id => holders.has(id)), ...[...holders.values()].filter(m => !order.includes(m.id)).sort((a, b) => a.user.username.localeCompare(b.user.username)).map(m => m.id)];
+        const save = q => { order = q; fs.mkdirSync(path.dirname(orderPath), { recursive: true }); fs.writeFileSync(orderPath, JSON.stringify(q)); };
+        const show = q => (q.length ? q.map((id, n) => `**${n + 1}.** <@${id}>`).join("\n") : "Nobody is on the waitlist.");
+        let q = queue();
+        if (sub === "list") return interaction.editReply({ content: `📋 **Waitlist** (${q.length})\n${show(q)}`, allowedMentions: { parse: [] } });
+        if (sub === "add") {
+          const user = interaction.options.getUser("user", true);
+          const member = await guild.members.fetch(user.id);
+          if (hasTeamRole(member)) return interaction.editReply(`❌ ${user} already has a team.`);
+          if (!member.roles.cache.has(wl.id)) await member.roles.add(wl, `Waitlisted by ${interaction.user.tag}`);
+          q = q.filter(id => id !== user.id);
+          const pos = Math.min(interaction.options.getInteger("position") || q.length + 1, q.length + 1);
+          q.splice(pos - 1, 0, user.id); save(q);
+          return interaction.editReply({ content: `✅ Added ${user} at position **${pos}**.\n${show(q)}`, allowedMentions: { parse: [] } });
+        }
+        if (sub === "remove") {
+          const user = interaction.options.getUser("user", true);
+          const member = await guild.members.fetch(user.id);
+          if (!member.roles.cache.has(wl.id)) return interaction.editReply(`${user} isn't on the waitlist.`);
+          await member.roles.remove(wl, `Removed by ${interaction.user.tag}`);
+          q = q.filter(id => id !== user.id); save(q);
+          return interaction.editReply({ content: `✅ Removed ${user}.\n${show(q)}`, allowedMentions: { parse: [] } });
+        }
+        if (sub === "pop") {
+          const pos = interaction.options.getInteger("position") || 1;
+          if (pos > q.length) return interaction.editReply(q.length ? `There are only ${q.length} people on the waitlist.` : "Nobody is on the waitlist.");
+          const id = q[pos - 1];
+          await (await guild.members.fetch(id)).roles.remove(wl, `Popped by ${interaction.user.tag}`);
+          q = q.filter(x => x !== id); save(q);
+          return interaction.editReply({ content: `✅ Popped <@${id}> (position ${pos}).\n${show(q)}`, allowedMentions: { parse: [] } });
+        }
       }
 
       if (interaction.commandName === "setup-nfl-teams") {

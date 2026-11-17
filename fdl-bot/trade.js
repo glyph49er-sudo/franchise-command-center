@@ -50,8 +50,7 @@ module.exports = function installTrade(client, commands, ctx) {
 
   const getConfig = () => readJson(CONFIG_FILE, null);
   const trades = () => readJson(TRADES_FILE, {});
-  const hidden = franchise.hiddenDevs;
-  const textFor = (trade, cfg) => T.tradeText(trade, cfg.roleId, { hiddenDevs: hidden, coachOf: franchise.ownerOf });
+  const textFor = (trade, cfg) => T.tradeText(trade, cfg.roleId, { hiddenDevs: franchise.hiddenDevs, coachOf: franchise.ownerOf });
 
   function components(trade) {
     const locked = trade.status !== T.STATUS.PENDING;

@@ -173,6 +173,14 @@ These read the live Madden league through the connection set up with `/ea-connec
 | `/stat-leaders category` | Season leaders, summed from every played week (idea from Franchise Hub) |
 | `/compare player1 player2` | Two players side by side with the winner of each row marked (Franchise Hub) |
 | `/schedule-difficulty team` | Opponent win % and rating for played vs remaining games (Franchise Hub) |
+| `/teams assign team user` / `free team` / `configure [channel]` / `reset` | Snallabot-style team management on FDL's team roles: assign (moves them off any other team), free a team, post the live teams board, reset everything (Manage Roles; reset needs Administrator) |
+| `/waitlist list` / `add user [position]` / `remove user` / `pop [position]` | Ordered waitlist backed by the waitlist role (order saved in `data/waitlist_order.json`) |
+| `/game_channels configure` | Admin: category, scoreboard channel, reminder period in hours, admin role, private channels on/off |
+| `/game_channels create week` / `wildcard` / `divisional` / `conference` / `superbowl` | One channel per game (weeks 1-18, 19, 20, 21, 23) with a scoreboard post. Buttons: ⏰ scheduled (stops reminders), 🏆 done (removes the channel), 🏠 / ✈️ request a force win (both = fair sim), ⏭ admin role confirms the sim |
+| `/game_channels clear [week]` / `notify` | Delete game channels / ping every unscheduled game now (they are also pinged automatically every N hours) |
+| `/sims [season]` | Force win / force loss / fair sim counts per team from confirmed sims |
+| `/stats weekly stat_type [week]` / `season stat_type` | Snallabot-style stat leaders |
+| `/player_configuration configure hidden_devs` | Admin: show or hide rookies' dev traits (saved in `data/player_config.json`, overrides `HIDDEN_DEVS`) |
 | `/top-players [position]` | Best players in the league by overall, including free agents |
 | `/game-channels week [category]` | Admin: one channel per game, both coaches pinged |
 | `/auto-potw [week] [force]` | Admin: post Players of the Week from the box scores |
@@ -182,6 +190,6 @@ Optional `.env` settings: `AUTO_POTW=true` (post Players of the Week automatical
 
 Franchise Hub (franchisehub.gg) is a hosted product with no public source, so its features were researched from its public site and re-created from scratch: `/compare`, `/stat-leaders`, `/schedule-difficulty`, `/playoffs`, trade voting. Not re-created: its XP, sportsbook, upgrades, prize wheel, postgame stories and box scores.
 
-Snallabot-derived code is MIT licensed; see `SNALLABOT_LICENSE.md`. Not ported (needs Snallabot's own database or external keys): sim confirmations (`/sims`), YouTube/Twitch stream notifiers, the teams board, the web export.
+Snallabot-derived code is MIT licensed; see `SNALLABOT_LICENSE.md`. Not ported (needs Snallabot's own database or external keys): `/player_configuration retire`, team logo customization, YouTube/Twitch stream notifiers, the teams board, the web export.
 
 Run the tests with `node --test test/*.test.js`.
