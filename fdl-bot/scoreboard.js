@@ -14,7 +14,7 @@ const L = require('./scoreboardLogic');
 const D = require('./franchiseData');
 
 module.exports = function install(client, commands, ctx) {
-  const { GUILD_ID, TEAMS, franchise, teamClaimer, gameChannels } = ctx;
+  const { GUILD_ID, TEAMS, franchise, teamClaimer, gameChannels, recaps } = ctx;
   const FILE = path.join(__dirname, 'data', 'scoreboard.json');
   const load = () => { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { return { channelId: process.env.SCOREBOARD_CHANNEL_ID || null, posts: {} }; } };
   const save = s => { fs.mkdirSync(path.dirname(FILE), { recursive: true }); const tmp = FILE + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(s, null, 2)); fs.renameSync(tmp, FILE); };
@@ -147,6 +147,8 @@ module.exports = function install(client, commands, ctx) {
         steps.push(sb.error ? `⚠️ Scoreboard: ${sb.error}` : sb.skipped ? `ℹ️ Scoreboard: ${sb.skipped} (run /scoreboard set)` : '✅ Scores channel updated');
         const gc = await gameChannels.refreshScoreboards().catch(() => null);
         if (gc) steps.push(`✅ ${gc} game channel scoreboard${gc === 1 ? '' : 's'} updated`);
+        const rc = recaps ? await recaps.tick().catch(() => null) : null;
+        if (rc && rc.posted) steps.push(`✅ ${rc.posted} new recap post${rc.posted === 1 ? '' : 's'}`);
         const potw = await franchise.autoPotwTick().catch(() => null);
         if (potw && potw.posted) steps.push('✅ Players of the Week posted');
         return i.editReply(`${steps.join('\n')}\n_Done in ${((Date.now() - t0) / 1000).toFixed(1)}s._`);

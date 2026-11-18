@@ -235,3 +235,18 @@ test('weekly awards: player flags, week-matched arrays, hub entries, categories 
   assert.deepStrictEqual(D.awardFields({ weeklyAwardOffensive: 1 }), { weeklyAwardOffensive: 1 });
   assert.strictEqual(D.describeAwardData(hub, players).weeklyAwardsActive, 1);
 });
+
+test('lineup picks the best starters per group; teamCompare computes unit averages', () => {
+  const mk = (pos, ovr, name) => ({ pos, ovr, name: name || `${pos}${ovr}` });
+  const roster = [mk('QB', 90), mk('QB', 70), mk('WR', 85), mk('WR', 80), mk('WR', 75), mk('WR', 60), mk('LE', 88), mk('K', 80)];
+  const lu = D.lineup(roster);
+  assert.deepStrictEqual(lu.map(g => g.group), ['QB', 'WR', 'DL', 'K']);
+  assert.deepStrictEqual(lu.find(g => g.group === 'WR').players.map(p => p.ovr), [85, 80, 75]);
+  const c = D.teamCompare({ id: 1, name: 'A', ovr: 82 }, { id: 2, name: 'B', ovr: 0 }, [{ teamId: 1, name: 'A', w: 3, l: 1, t: 0, pf: 90, pa: 60, diff: 30 }], roster, [mk('QB', 50)]);
+  assert.strictEqual(c.a.record, '3-1');
+  assert.strictEqual(c.a.ovr, 82);
+  assert.strictEqual(c.a.offense, (90 + 85 + 80 + 75) / 4);
+  assert.strictEqual(c.b.record, '—');
+  assert.strictEqual(c.b.ovr, 50); // no team ovr -> average of starters
+  assert.strictEqual(c.a.best[0].ovr, 90);
+});

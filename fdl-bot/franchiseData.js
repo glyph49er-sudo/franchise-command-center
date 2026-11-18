@@ -289,6 +289,29 @@ function selectPlayersOfWeek(performances, ownerOf, count = 4) {
   return picked;
 }
 
+// ---- Franchise Hub style: team lineup (starters) and team compare ----------------------
+const LINEUP = [['QB', ['QB'], 1], ['HB', ['HB', 'RB'], 1], ['FB', ['FB'], 1], ['WR', ['WR'], 3], ['TE', ['TE'], 1], ['OL', ['LT', 'LG', 'C', 'RG', 'RT'], 5],
+  ['DL', ['LE', 'RE', 'DT', 'DE'], 4], ['LB', ['LOLB', 'MLB', 'ROLB'], 3], ['CB', ['CB'], 3], ['S', ['FS', 'SS'], 2], ['K', ['K'], 1], ['P', ['P'], 1]];
+// roster: normalizePlayer[] -> [{ group, players: [top N by ovr] }] (groups with nobody are dropped)
+function lineup(roster) {
+  return LINEUP.map(([group, positions, n]) => ({ group, players: roster.filter(p => positions.includes(p.pos)).sort((a, b) => b.ovr - a.ovr).slice(0, n) })).filter(g => g.players.length);
+}
+const avgOvr = ps => (ps.length ? ps.reduce((s, p) => s + p.ovr, 0) / ps.length : 0);
+// Head-to-head numbers for two teams. rows: normalizeStandings output; rosters: normalizePlayer[] per team.
+function teamCompare(a, b, rows, rosterA, rosterB) {
+  const side = (team, roster) => {
+    const r = rows.find(x => x.teamId === team.id) || {};
+    const lu = lineup(roster), flat = lu.flatMap(g => g.players);
+    const unit = names => avgOvr(lu.filter(g => names.includes(g.group)).flatMap(g => g.players));
+    return {
+      name: team.name, record: r.name ? recordText(r) : '—', pf: r.pf ?? 0, pa: r.pa ?? 0, diff: r.diff ?? 0,
+      ovr: team.ovr || r.ovr || Math.round(avgOvr(flat)), offense: unit(['QB', 'HB', 'FB', 'WR', 'TE', 'OL']), defense: unit(['DL', 'LB', 'CB', 'S']),
+      best: [...roster].sort((x, y) => y.ovr - x.ovr).slice(0, 3)
+    };
+  };
+  return { a: side(a, rosterA), b: side(b, rosterB) };
+}
+
 // ---- Weekly awards (Players of the Week) ----------------------------------------------
 // Madden decides the weekly awards itself after each sim. The unofficial EA export doesn't document where
 // they live, so this looks for award-shaped fields on player rows and award-shaped entries in the league hub.
@@ -474,6 +497,7 @@ function scheduleDifficulty(teamId, gamesByWeek, standingsRows) {
 }
 
 module.exports = {
+  LINEUP, lineup, teamCompare,
   extractWeeklyAwards, describeAwardData, awardCategory, awardFields,
   seasonLeaders, comparePlayers, scheduleDifficulty,
   PLAYOFF_ROUNDS, projectedWildCard, teamSeasonLog, seasonLogLine,

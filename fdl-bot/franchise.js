@@ -146,6 +146,13 @@ module.exports = function installFranchise(client, commands, ctx) {
       .addStringOption(o => o.setName('category').setDescription('Stat').setRequired(true)
         .addChoices(...Object.entries(D.LEADER_CATEGORIES).map(([value, c]) => ({ name: c.label, value }))))
       .addIntegerOption(o => o.setName('week').setDescription('Week number (default: current week)').setMinValue(1).setMaxValue(23)),
+    new SlashCommandBuilder().setName('lineup').setDescription("A team's starting lineup (best player at each spot).")
+      .addStringOption(o => teamOpt(o, 'NFL team').setRequired(true)),
+    new SlashCommandBuilder().setName('team-compare').setDescription('Two teams head to head: record, ratings, best players.')
+      .addStringOption(o => o.setName('team1').setDescription('First team').setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName('team2').setDescription('Second team').setRequired(true).setAutocomplete(true)),
+    new SlashCommandBuilder().setName('player-list').setDescription('List every player matching a search (name, position or team).')
+      .addStringOption(o => o.setName('search').setDescription('Part of a name, or a position like WR').setRequired(true)),
     new SlashCommandBuilder().setName('stats').setDescription('Player stat leaders for your league (Snallabot style).')
       .addSubcommand(s => s.setName('weekly').setDescription('Weekly stat leaders')
         .addStringOption(o => o.setName('stat_type').setDescription('passing, rushing, receiving, tackles...').setRequired(true).addChoices(...Object.entries(D.LEADER_CATEGORIES).map(([value, c]) => ({ name: c.label, value }))))
@@ -190,7 +197,7 @@ module.exports = function installFranchise(client, commands, ctx) {
         .addChoices(...['teams', 'standings', 'schedule', 'roster', 'stats', 'hub', 'awards'].map(v => ({ name: v, value: v }))))
       .setDefaultMemberPermissions(admin)
   );
-  const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'stats', 'player_configuration', 'stat-leaders', 'compare', 'schedule-difficulty', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
+  const OWN = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule', 'roster', 'player', 'leaders', 'lineup', 'team-compare', 'player-list', 'stats', 'player_configuration', 'stat-leaders', 'compare', 'schedule-difficulty', 'power-rankings', 'free-agents', 'game-channels', 'auto-potw', 'franchise-debug']);
 
   // ---------------------------------------------------------------------------
   // Rendering
@@ -292,7 +299,7 @@ module.exports = function installFranchise(client, commands, ctx) {
   // Game of the Week are NOT live - each of those is a new, separate post.
   // ---------------------------------------------------------------------------
   const LIVE = new Set(['franchise-hub', 'team', 'playoff-picture', 'playoffs', 'team-schedule', 'top-players', 'standings', 'schedule',
-    'roster', 'player', 'leaders', 'stats', 'stat-leaders', 'power-rankings', 'free-agents', 'schedule-difficulty', 'compare']);
+    'roster', 'player', 'leaders', 'stats', 'stat-leaders', 'power-rankings', 'free-agents', 'schedule-difficulty', 'compare', 'lineup', 'team-compare', 'player-list']);
   const HEAVY = new Set(['stat-leaders', 'schedule-difficulty']); // read up to 18 weeks; refreshed every 3rd cycle
   const LIVE_FILE = path.join(__dirname, 'data', 'live_posts.json');
   const LIVE_MAX = 100, LIVE_PER_CHANNEL = 20;
@@ -400,7 +407,7 @@ module.exports = function installFranchise(client, commands, ctx) {
   async function autocomplete(i) {
     const focused = i.options.getFocused(true);
     const q = String(focused.value || '').toLowerCase();
-    if (focused.name === 'team') {
+    if (['team', 'team1', 'team2'].includes(focused.name)) {
       const names = Object.keys(TEAMS).filter(t => !q || t.toLowerCase().includes(q) || TEAMS[t].short.toLowerCase().includes(q) || TEAMS[t].abbr.toLowerCase().includes(q));
       return i.respond(names.slice(0, 25).map(t => ({ name: `${TEAMS[t].short} (${TEAMS[t].abbr})`, value: t })));
     }
@@ -545,6 +552,42 @@ module.exports = function installFranchise(client, commands, ctx) {
       }
       if (!games.length) throw new UserError(`No games found for week ${week}.`);
       return i.editReply({ embeds: [embed(`📅 Week ${week} Schedule`, games.map(D.gameLine).join('\n')).setFooter({ text: '✅ = final' })] });
+    }
+
+    if (name === 'lineup') {
+      const team = findTeam(await getTeams(), i.options.getString('team', true));
+      if (!team) throw new UserError("I couldn't find that team.");
+      const groups = D.lineup(await getRoster(team));
+      if (!groups.length) throw new UserError(`No roster found for the ${team.name}.`);
+      const lines = groups.flatMap(g => g.players.map((p, n) => `${(n ? '' : g.group).padEnd(3)} ${p.pos.padEnd(4)} ${p.name.slice(0, 20).padEnd(20)} ${String(p.ovr).padStart(2)} ${(devTag(p) || '').slice(0, 9)}`));
+      const owner = ownerOf(team.name);
+      return i.editReply({ embeds: [embed(`${team.name} Starting Lineup`, `${owner ? `Coach: <@${owner}>\n` : ''}${block(lines)}`)] });
+    }
+
+    if (name === 'team-compare') {
+      const teams = await getTeams();
+      const [t1, t2] = [i.options.getString('team1', true), i.options.getString('team2', true)].map(q => findTeam(teams, q));
+      if (!t1 || !t2) throw new UserError(`I couldn't find ${!t1 ? 'the first' : 'the second'} team.`);
+      if (t1.id === t2.id) throw new UserError('Pick two different teams.');
+      const [rows, r1, r2] = await Promise.all([getStandings(), getRoster(t1), getRoster(t2)]);
+      const c = D.teamCompare(t1, t2, rows, r1, r2), n1 = x => (x ? x.toFixed(1) : '—');
+      const mark = (x, y, flip = false) => (x === y ? ['', ''] : (flip ? x < y : x > y) ? ['✅', ''] : ['', '✅']);
+      const rowsOut = [['Record', c.a.record, c.b.record, ['', '']], ['Overall', c.a.ovr, c.b.ovr, mark(c.a.ovr, c.b.ovr)], ['Offense', n1(c.a.offense), n1(c.b.offense), mark(c.a.offense, c.b.offense)],
+        ['Defense', n1(c.a.defense), n1(c.b.defense), mark(c.a.defense, c.b.defense)], ['Pts For', c.a.pf, c.b.pf, mark(c.a.pf, c.b.pf)], ['Pts Against', c.a.pa, c.b.pa, mark(c.a.pa, c.b.pa, true)],
+        ['Point Diff', D.signed ? D.signed(c.a.diff) : c.a.diff, D.signed ? D.signed(c.b.diff) : c.b.diff, mark(c.a.diff, c.b.diff)]]
+        .map(([l, a, b, [ma, mb]]) => `${ma ? '✅' : '  '}${String(a).padStart(6)} │ ${l.padEnd(11)} │ ${String(b).padEnd(6)}${mb ? '✅' : ''}`);
+      const best = t => t.best.map(p => `${p.name} (${p.pos} ${p.ovr})`).join(', ');
+      return i.editReply({ embeds: [embed(`${c.a.name} vs ${c.b.name}`, `${block(rowsOut)}`).addFields({ name: c.a.name, value: best(c.a) || '—' }, { name: c.b.name, value: best(c.b) || '—' })] });
+    }
+
+    if (name === 'player-list') {
+      const q = i.options.getString('search', true).toLowerCase().trim();
+      if (!peek('allPlayers')) await i.editReply('🔎 Loading every roster from EA — the first lookup takes a minute…');
+      const all = await getAllPlayers();
+      const hits = all.filter(p => p.name.toLowerCase().includes(q) || (q.length <= 4 && D.matchesPosition(p.pos, q))).sort((a, b) => b.ovr - a.ovr).slice(0, 25);
+      if (!hits.length) throw new UserError(`No players match "${q}".`);
+      const lines = hits.map(p => `${p.name.slice(0, 20).padEnd(20)} ${p.pos.padEnd(4)} ${String(p.ovr).padStart(2)} ${p.team.slice(0, 12)}`);
+      return i.editReply({ embeds: [embed(`Players matching "${q}"`, block(lines)).setFooter({ text: `Top ${hits.length} by overall` })] });
     }
 
     if (name === 'roster') {
@@ -719,6 +762,8 @@ module.exports = function installFranchise(client, commands, ctx) {
   return {
     getStandings, getCurrent, getTeams, getRoster, getAllPlayers, getGames, getStats, findTeam, ownerOf,
     rosterWithin, currentSeasonYear, playerCard, withEA, UserError, embed, get hiddenDevs() { return HIDDEN_DEVS; },
-    postPotw, autoPotwTick, refreshLive, invalidate, getHub, LIVE
+    postPotw, autoPotwTick, refreshLive, invalidate, getHub, LIVE,
+    // Render a command like a user ran it (for scheduled static posts): -> { content, embeds, components }
+    renderCommand: (command, snap = { sub: null, opts: {} }) => renderLive({ command, snap, guildId: GUILD_ID, channelId: null })
   };
 };
