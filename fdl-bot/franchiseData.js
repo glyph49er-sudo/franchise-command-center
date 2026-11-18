@@ -267,9 +267,50 @@ function playerPerformances(stats, byId) {
       parts.push([tkl && `${tkl} TKL`, sacks && `${sacks} SK`, ints && `${ints} INT`, ff && `${ff} FF`, defTD && `${defTD} TD`].filter(Boolean).join(', '));
     }
     if (!parts.length) continue;
-    out.push({ name: e.name, team: e.team, pos: e.pos, score, summary: parts.join(' • ') });
+    const offScore = score - (tkl + sacks * 4 + ints * 6 + ff * 3 + defTD * 6), defScore = tkl + sacks * 4 + ints * 6 + ff * 3 + defTD * 6;
+    out.push({ name: e.name, team: e.team, teamId: e.teamId, pos: e.pos, score, offScore, defScore, summary: parts.join(' • '), statLine: maddenLine(e) });
   }
   return out.sort((a, b) => b.score - a.score);
+}
+// The stat line the way Madden's Players of the Week screen shows it, e.g.
+// "11-20, 234 PASS YDS, 4 PASS TD, 1 INT, 11 CAR, 201 RUSH YDS, 2 RUSH TD" or "5 TKL, 3 INT".
+function maddenLine(e) {
+  const g = (row, keys) => num(pick(row || {}, keys));
+  const out = [];
+  if (e.pass && g(e.pass, ['passAtt'])) {
+    out.push(`${g(e.pass, ['passComp'])}-${g(e.pass, ['passAtt'])}`, `${g(e.pass, ['passYds'])} PASS YDS`, `${g(e.pass, ['passTDs'])} PASS TD`);
+    if (g(e.pass, ['passInts'])) out.push(`${g(e.pass, ['passInts'])} INT`);
+  }
+  if (e.rush && (g(e.rush, ['rushAtt']) || g(e.rush, ['rushYds']))) {
+    out.push(`${g(e.rush, ['rushAtt'])} CAR`, `${g(e.rush, ['rushYds'])} RUSH YDS`);
+    if (g(e.rush, ['rushTDs'])) out.push(`${g(e.rush, ['rushTDs'])} RUSH TD`);
+  }
+  if (e.rec && (g(e.rec, ['recCatches', 'recCatch']) || g(e.rec, ['recYds']))) {
+    out.push(`${g(e.rec, ['recCatches', 'recCatch'])} REC`, `${g(e.rec, ['recYds'])} REC YDS`);
+    if (g(e.rec, ['recTDs'])) out.push(`${g(e.rec, ['recTDs'])} REC TD`);
+  }
+  if (e.def) {
+    const t = g(e.def, ['defTotalTackles', 'defTackles']), sk = g(e.def, ['defSacks']), it = g(e.def, ['defInts']), ff = g(e.def, ['defForcedFum']), td = g(e.def, ['defTDs']);
+    if (t) out.push(`${t} TKL`);
+    if (sk) out.push(`${sk} SK`);
+    if (it) out.push(`${it} INT`);
+    if (ff) out.push(`${ff} FF`);
+    if (td) out.push(`${td} TD`);
+  }
+  return out.join(', ');
+}
+
+// Madden's four weekly awards: AFC/NFC Offense and AFC/NFC Defense. confOf(teamId) -> 'AFC' | 'NFC' | null.
+// Used when the EA export doesn't carry the awards themselves: the best performer per slot from that week's stats.
+function conferenceAwards(performances, confOf) {
+  const out = [];
+  for (const side of ['Offense', 'Defense']) for (const conf of ['AFC', 'NFC']) {
+    const key = side === 'Offense' ? 'offScore' : 'defScore';
+    const pool = performances.filter(p => confOf(p.teamId) === conf && p[key] > 0 && (side === 'Defense' ? p.defScore > p.offScore : p.offScore >= p.defScore));
+    const best = pool.sort((a, b) => b[key] - a[key])[0];
+    if (best) out.push({ category: `${conf} ${side}`, name: best.name, pos: best.pos, team: best.team, teamId: best.teamId, statLine: best.statLine, source: 'stats' });
+  }
+  return out;
 }
 
 // Pick up to `count` standout players whose teams have DIFFERENT Discord owners.
@@ -506,5 +547,5 @@ module.exports = {
   pick, num, clip, slug, bar, findDeep, currentWeekFromHub,
   normalizeTeams, teamsById, divisionOf, normalizeStandings, groupStandings, recordText, signed, byRecord, powerRankings,
   isFinalGame, normalizeGames, gameLine, playerName, devLabel, labelFromKey, normalizePlayer, topRatings, matchesPosition,
-  weeklyLeaders, playerPerformances, selectPlayersOfWeek
+  weeklyLeaders, playerPerformances, selectPlayersOfWeek, conferenceAwards, maddenLine
 };

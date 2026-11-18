@@ -228,19 +228,36 @@ module.exports = function installFranchise(client, commands, ctx) {
   // Players of the Week from EA stats
   // ---------------------------------------------------------------------------
   // Madden decides the weekly awards itself after each sim; we read them from EA (never score box scores).
+  // Madden shows four weekly awards: AFC/NFC Offense and AFC/NFC Defense, each with the player's stat line.
+  // 1) use the awards Madden itself publishes (if the EA export carries them), 2) otherwise pick the best
+  // performer per slot from that week's stats. Either way each line carries the stat line.
   async function buildPotw(week) {
-    const [hub, players] = await Promise.all([getHub().catch(() => null), getAllPlayers()]);
-    const awards = D.extractWeeklyAwards({ players, hub, week });
+    const [hub, players, stats, standings, teams] = await Promise.all([getHub().catch(() => null), getAllPlayers(), getStats(week).catch(() => ({})), getStandings(), getTeams()]);
+    const byId = D.teamsById(teams);
+    const confOfId = Object.fromEntries(standings.map(r => [r.teamId, (r.division || '').slice(0, 3)]));
+    const perfs = D.playerPerformances(stats, byId);
+    let awards = D.extractWeeklyAwards({ players, hub, week }), source = 'madden';
+    if (awards.length) {
+      awards = awards.map(a => {
+        const perf = perfs.find(p => p.name === a.name && (!a.teamId || p.teamId === a.teamId)) || perfs.find(p => p.name === a.name);
+        const conf = confOfId[a.teamId || perf?.teamId];
+        const side = a.category === 'Offensive' ? 'Offense' : a.category === 'Defensive' ? 'Defense' : null;
+        return { ...a, category: conf && side ? `${conf} ${side}` : a.category, statLine: perf?.statLine || '' };
+      });
+    } else {
+      awards = D.conferenceAwards(perfs, id => confOfId[id] || null); source = 'stats';
+    }
     if (!awards.length) {
-      throw new UserError(`Madden hasn't published the weekly awards for week ${week} yet (they appear after the week is simmed). `
+      throw new UserError(`I don't have week ${week}'s stats or awards yet (they appear after the week is simmed). `
         + 'If this keeps happening after the sim, an admin can run `/franchise-debug dataset:awards` to see what EA is sending.');
     }
-    const sig = awards.map(a => `${a.category}:${a.name}`).join('|');
+    for (const a of awards) if (!a.pos) a.pos = players.find(p => p.name === a.name && (!a.teamId || p.teamId === a.teamId))?.pos || '';
+    const sig = `${source}|` + awards.map(a => `${a.category}:${a.name}`).join('|');
     const picked = awards.map(a => ({
       userId: ownerOf(a.team) || null, name: a.name, team: a.team,
-      line: `**${a.category} Player of the Week:** **${a.name}** (${a.pos ? `${a.pos}, ` : ''}${a.team})`
+      line: `**${a.category}:** **${a.name}** (${a.pos ? `${a.pos}, ` : ''}${a.team})${a.statLine ? `\n${a.statLine}` : ''}`
     }));
-    picked.sig = sig;
+    picked.sig = sig; picked.source = source;
     return picked;
   }
   async function postPotw(week, { force = false, channelId = POTW_CHANNEL_ID } = {}) {
@@ -253,7 +270,7 @@ module.exports = function installFranchise(client, commands, ctx) {
     if (!force && state.lastSig === picked.sig) throw new UserError(`Madden still shows last week's awards for week ${week}; waiting for the new ones.`);
     const channel = await client.channels.fetch(channelId).catch(() => null);
     if (!channel?.isTextBased()) throw new UserError(`I can't access the Players of the Week channel (${channelId}).`);
-    const sent = await features.postPlayersOfWeek(channel, `Week ${week}`, picked.map(p => ({ userId: p.userId, line: p.line })));
+    const sent = await features.postPlayersOfWeek(channel, `Week ${week}`, picked.map(p => ({ userId: p.userId, line: p.line })), picked.source);
     state.posted[key] = { messageId: sent.id, channelId: channel.id, at: Date.now() };
     state.lastSig = picked.sig;
     writeState(state);

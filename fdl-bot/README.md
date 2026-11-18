@@ -220,3 +220,7 @@ The claim message shows the league login (default `FDL27` / `MADDENFDL27`); over
 - `/bet games|place|mine`: sportsbook on this week's real games. Odds come from team overalls (with a small house edge) and are locked when the bet is placed. Bets settle on their own after Madden shows the game final (every 5 min). Up to 5 open bets each.
 - `/economy give|take|channel|settle` (admin). `/economy channel` is where settled bets are announced.
 - `/newswire set|off|now` (admin): automatic headlines for signings, releases and trades (players 75+ OVR, `NEWS_MIN_OVR`), upsets (`NEWS_UPSET_GAP`, default 5 OVR) and win/loss streaks. The first check is only a baseline.
+
+## Players of the Week (updated)
+
+Madden's weekly awards are four slots: **AFC Offense, NFC Offense, AFC Defense, NFC Defense**. The bot first looks for the awards in the EA export (`/franchise-debug dataset:awards` shows what EA sends). If the export doesn't carry them, it picks the best performer per slot from that week's stats. Each award is posted with the Madden-style stat line (e.g. `11-20, 234 PASS YDS, 4 PASS TD, 1 INT, 11 CAR, 201 RUSH YDS, 2 RUSH TD`); the stat lines stay on the post after coaches claim their +3, and the claim reply repeats the coach's award.
