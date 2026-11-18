@@ -193,3 +193,21 @@ Franchise Hub (franchisehub.gg) is a hosted product with no public source, so it
 Snallabot-derived code is MIT licensed; see `SNALLABOT_LICENSE.md`. Not ported (needs Snallabot's own database or external keys): `/player_configuration retire`, team logo customization, YouTube/Twitch stream notifiers, the teams board, the web export.
 
 Run the tests with `node --test test/*.test.js`.
+
+## Latest additions
+
+**Auto-verify on join.** Pressing a team's claim button now makes the bot watch Madden (every 45 s, up to 1 h). As soon as that member shows up as the team's owner in the league, they are assigned through the same routine as `/teams assign` (role, nickname, open-teams post, waitlist) — no need to click "claimed".
+
+**Auto Player of the Week** reads Madden's weekly awards (decided after the sim), never box scores. `AUTO_POTW=false` turns it off; `AWARD_FIELDS` adds extra field names; use `/franchise-debug dataset:awards` to see the raw award data if nothing posts. Each new award is a new message (POTW/GOTW stay in the channel).
+
+**Everything live auto-updates.** Stats, leaders, standings, free agents, power rankings, rosters, schedules etc. are edited in place when Madden data changes. `/update-sync` (admin) forces a Madden read now; `/export current|week|all_weeks` does the same (Snallabot name).
+
+**Scoreboard** (`/scoreboard set|refresh|post`, env `SCOREBOARD_CHANNEL_ID`): Snallabot-style week scoreboard, with a "<Winner> box score" button per finished game that opens a full box score for both teams.
+
+**Recaps** (`/recaps set|off|now`, env `RECAP_CHANNEL_ID`): matchup cards, FINAL cards with Box Score button, weekly power rankings.
+
+**More commands:** `/lineup`, `/team-compare`, `/player-list`, `/stat-leaders`, `/compare`, `/schedule-difficulty`, `/stats weekly|season`, `/player_configuration`, `/teams`, `/waitlist`, `/game_channels`, `/sims`, `/simple-open-teams`, `/streams`, `/logger`, `/broadcasts`, `/team-logo`, `/export`.
+
+`/broadcasts` needs `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET` and/or `YOUTUBE_API_KEY` in `.env`. `/logger` saves a finished game channel into a thread before it is deleted.
+
+Not included: Franchise Hub's sportsbook / XP / prize wheel / newswire, and Snallabot's dashboard. Total is about 70 slash commands (limit 100), so no second bot is needed.

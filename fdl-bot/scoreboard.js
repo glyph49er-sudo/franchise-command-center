@@ -34,9 +34,12 @@ module.exports = function install(client, commands, ctx) {
 
   // team emoji: a server emoji named after the team ("cowboys", "dal"); none -> no emoji.
   function emojiFor(guild) {
+    let custom = {};
+    try { custom = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'team_logos.json'), 'utf8')); } catch { /* no custom logos */ }
     const byName = new Map();
     for (const e of guild?.emojis?.cache?.values?.() || []) byName.set(e.name.toLowerCase(), e);
     return teamName => {
+      if (custom[String(teamName).toLowerCase()]) return custom[String(teamName).toLowerCase()];
       const full = Object.keys(TEAMS).find(k => TEAMS[k].short.toLowerCase() === String(teamName).toLowerCase());
       const e = byName.get(String(teamName).toLowerCase()) || (full && byName.get(TEAMS[full].abbr.toLowerCase()));
       return e ? e.toString() : '';

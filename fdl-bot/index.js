@@ -359,7 +359,8 @@ TEAM_CLAIMER = require('./teamClaimer')(client, commands);
 const FRANCHISE = require('./franchise')(client, commands, { GUILD_ID, SCORE_CHANNEL_ID, TEAMS, normalizeTeam, isAdmin, teamClaimer: TEAM_CLAIMER, features: FDL_FEATURES });
 // Ported from Snallabot (MIT, see SNALLABOT_LICENSE.md): trade committee.
 require('./trade')(client, commands, { GUILD_ID, franchise: FRANCHISE });
-const GAME_CHANNELS = require('./gameChannels')(client, commands, { GUILD_ID, franchise: FRANCHISE });
+const EXTRAS = require('./extras')(client, commands, { GUILD_ID, TEAMS, normalizeTeam, franchise: FRANCHISE });
+const GAME_CHANNELS = require('./gameChannels')(client, commands, { GUILD_ID, franchise: FRANCHISE, logger: EXTRAS });
 const RECAPS = require('./recaps')(client, commands, { GUILD_ID, franchise: FRANCHISE });
 require('./scoreboard')(client, commands, { GUILD_ID, TEAMS, franchise: FRANCHISE, teamClaimer: TEAM_CLAIMER, gameChannels: GAME_CHANNELS, recaps: RECAPS, isAdmin });
 async function registerCommands(){const rest=new REST({version:'10'}).setToken(TOKEN);await rest.put(Routes.applicationGuildCommands(CLIENT_ID,GUILD_ID),{body:commands.map(c=>c.toJSON())});console.log('Registered league management commands.');}

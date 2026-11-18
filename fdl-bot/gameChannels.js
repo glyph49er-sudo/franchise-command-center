@@ -14,7 +14,7 @@ const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Chann
 const L = require('./gameChannelLogic');
 
 module.exports = function install(client, commands, ctx) {
-  const { GUILD_ID, franchise } = ctx;
+  const { GUILD_ID, franchise, logger } = ctx;
   const FILE = path.join(__dirname, 'data', 'game_channels.json');
   const blank = () => ({ config: null, weeks: {}, sims: [] });
   function load() { try { const v = JSON.parse(fs.readFileSync(FILE, 'utf8')); return { ...blank(), ...v }; } catch { return blank(); } }
@@ -208,6 +208,7 @@ module.exports = function install(client, commands, ctx) {
         if (action === 'done') {
           st.done = true; save(store);
           await i.reply({ content: '🏆 Thanks! Cleaning up this channel…' });
+          if (logger) await logger.archiveChannel(i.channel).catch(e => console.error('[logger]', e.message));
           await updateScoreboard(i.guild, store, String(wk.week));
           setTimeout(() => i.channel.delete('Game finished').catch(() => {}), 4000);
           return;
