@@ -1357,13 +1357,15 @@ client.on("interactionCreate", async interaction => {
         .setTitle(`${role.name} — join the league first`)
         .setDescription([
           `**League:** ${leagueName}`,
+          `**League username:** ${process.env.LEAGUE_USERNAME || "FDL27"}`,
+          `**League password:** ${process.env.LEAGUE_PASSWORD || "MADDENFDL27"}`,
           `**Platform:** Madden NFL 27 • PC`,
           `**Team:** ${resolveGuildEmoji(interaction.guild, data.emoji)} ${role.name}`,
           `**Your EA username:** \`${username}\``,
           "",
           "**How to join**",
           "1. Open Madden NFL 27 → **Franchise** → **Join League** (or accept the invite).",
-          `2. Pick **${leagueName}** and take the **${role.name}**.`,
+          `2. Pick **${leagueName}** (enter the league username and password above if Madden asks) and take the **${role.name}**.`,
           "3. That's it — I'm reading Madden and will verify you automatically as soon as you're in (you can also press **Joined** to check right now).",
           "",
           `⚠️ Nothing is assigned until Madden shows you on the ${role.name} with this EA username.`

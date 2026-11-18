@@ -211,3 +211,5 @@ Run the tests with `node --test test/*.test.js`.
 `/broadcasts` needs `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET` and/or `YOUTUBE_API_KEY` in `.env`. `/logger` saves a finished game channel into a thread before it is deleted.
 
 Not included: Franchise Hub's sportsbook / XP / prize wheel / newswire, and Snallabot's dashboard. Total is about 70 slash commands (limit 100), so no second bot is needed.
+
+The claim message shows the league login (default `FDL27` / `MADDENFDL27`); override with `LEAGUE_USERNAME` and `LEAGUE_PASSWORD` in `.env`.
