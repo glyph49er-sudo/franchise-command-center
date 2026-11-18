@@ -213,3 +213,10 @@ Run the tests with `node --test test/*.test.js`.
 Not included: Franchise Hub's sportsbook / XP / prize wheel / newswire, and Snallabot's dashboard. Total is about 70 slash commands (limit 100), so no second bot is needed.
 
 The claim message shows the league login (default `FDL27` / `MADDENFDL27`); override with `LEAGUE_USERNAME` and `LEAGUE_PASSWORD` in `.env`.
+
+## Economy, sportsbook and newswire (Franchise Hub features)
+
+- `/wallet`, `/daily` (streak bonus), `/wheel` (free spin every ~20h; coins, XP, 2x XP boost, bet insurance, jackpot), `/shop list|buy` (XP boost, bet insurance, extra spin, lucky charm), `/leaderboard coins|xp|profit`. Everyone starts with 1,000 coins; chatting earns small XP/coins (once a minute).
+- `/bet games|place|mine`: sportsbook on this week's real games. Odds come from team overalls (with a small house edge) and are locked when the bet is placed. Bets settle on their own after Madden shows the game final (every 5 min). Up to 5 open bets each.
+- `/economy give|take|channel|settle` (admin). `/economy channel` is where settled bets are announced.
+- `/newswire set|off|now` (admin): automatic headlines for signings, releases and trades (players 75+ OVR, `NEWS_MIN_OVR`), upsets (`NEWS_UPSET_GAP`, default 5 OVR) and win/loss streaks. The first check is only a baseline.
